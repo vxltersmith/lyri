@@ -1,0 +1,6 @@
+speechbrain
+audio-separator==0.24.1
+onnxruntime-gpu
+ffmpeg-python
+nNpyenchant
+langid

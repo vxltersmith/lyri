@@ -1,0 +1,5 @@
+checkpoints/*
+aligner_cache/*
+inputs_cache/*
+.vscode/*
+sherpa-onnx/*
