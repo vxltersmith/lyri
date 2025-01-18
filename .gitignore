@@ -3,3 +3,6 @@ aligner_cache/*
 inputs_cache/*
 .vscode/*
 sherpa-onnx/*
+logs/bot.log
+__pycache__/*
+configs/bot.yaml

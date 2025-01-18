@@ -1,0 +1,30 @@
+bot:
+  token: ""
+  welcome_message: |
+    🎵 Welcome to the Lyrics Alignment Bot! 🎵
+
+    I can help you create lyric videos by aligning lyrics with audio. Here's how to use me:
+
+    1️⃣ Send me an audio file or YouTube link
+    2️⃣ Send me the lyrics (as text or .txt file)
+    3️⃣ (Optional) Send an image for the background
+    4️⃣ Use the /align command to start the process
+
+    The output will include:
+    • A video with synchronized lyrics
+    • An SRT subtitles file
+    • The separated audio track
+
+    Send me an audio file or YouTube link to get started! 🎶
+
+paths:
+  input_cache: "./inputs_cache/"
+  output_cache: "./aligner_cache/"
+
+aligner:
+  aligner_model_path: "./checkpoints/vocal_separator/Kim_Vocal_2.onnx"  # Path to aligner model
+  default_background_image: "/app/synclyr/default.jpg"  # Add this line
+
+log:
+  level: "INFO"  # Can be DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "./logs/bot.log"  # Path to log file
