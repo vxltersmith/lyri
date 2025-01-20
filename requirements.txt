@@ -1,0 +1,14 @@
+speechbrain
+audio-separator==0.24.1
+onnxruntime-gpu
+ffmpeg-python
+nNpyenchant
+langid
+python-telegram-bot
+pyyaml
+yt_dlp
+Pillow>=9.0.0
+Wand>=0.6.
+aiofiles
+aiohttp
+aiogram

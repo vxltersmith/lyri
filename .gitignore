@@ -1,0 +1,10 @@
+checkpoints/*
+aligner_cache/*
+inputs_cache/*
+.vscode/*
+sherpa-onnx/*
+telegram_bot-api/*
+logs/bot.log
+__pycache__/*
+configs/bot.yaml
+*.binlog
