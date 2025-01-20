@@ -8,3 +8,6 @@ logs/bot.log
 __pycache__/*
 configs/bot.yaml
 *.binlog
+data/*
+configs/debug_bot.yaml
+configs/prod_bot.yaml

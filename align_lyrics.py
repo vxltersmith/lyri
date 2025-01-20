@@ -10,7 +10,8 @@ import shutil
 def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None, 
         output_cache='./aligner_cache', input_cache='./inputs_cache/', background_file_name=None,
         production_type = 'music',
-        aligner_config_string = "task_language=eng|os_task_file_format=srt|is_text_type=plain|os_task_adjust_boundary_nonspeech_min=1.0|os_task_vad_threshold=0.5"):
+        aligner_config_string = "task_language=eng|os_task_file_format=srt|is_text_type=plain|os_task_adjust_boundary_nonspeech_min=1.0|os_task_vad_threshold=0.5",
+        overlay_text="by Lyri.ai"):
     
     input_audio_path = os.path.join(input_cache, audio_file_name)
     output_file_path = os.path.join(output_cache, f"{audio_file_name}_aligned.mp4")
@@ -35,38 +36,42 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
     os.makedirs(audio_cache_path, exist_ok=True)
 
     # Step 1: Vocal Separation
-    if vocal_separator_model:
-        print('Performing vocal separation...')
-        
-        if not input_audio_path.endswith('.wav'):
-            def convert_mp3_to_wav(input_mp3_path, output_wav_path):
-                if os.path.exists(output_wav_path):
-                    return output_wav_path
-                try:
-                    ffmpeg.input(input_mp3_path).output(output_wav_path).run()
-                    print(f"Conversion successful: {output_wav_path}")
-                except ffmpeg.Error as e:
-                    print(f"Error occurred during conversion: {e.stderr.decode('utf8')}")
+    if not vocal_separator_model:
+        raise ValueError('Vocal separator model is not specified')
+    
+    print('Performing vocal separation...')
+    
+    if not input_audio_path.endswith('.wav'):
+        def convert_mp3_to_wav(input_mp3_path, output_wav_path):
+            if os.path.exists(output_wav_path):
                 return output_wav_path
-            input_audio_path = convert_mp3_to_wav(input_audio_path, input_audio_path+'.wav')
+            try:
+                ffmpeg.input(input_mp3_path).output(output_wav_path).run()
+                print(f"Conversion successful: {output_wav_path}")
+            except ffmpeg.Error as e:
+                print(f"Error occurred during conversion: {e.stderr.decode('utf8')}")
+            return output_wav_path
+        input_audio_path = convert_mp3_to_wav(input_audio_path, input_audio_path+'.wav')
+    
+    vocal_separator = Separator(
+        output_dir=audio_cache_path,
+        #output_single_stem="vocals",
+        model_file_dir=os.path.dirname(vocal_separator_model),
+    )
+    vocal_separator.load_model(os.path.basename(vocal_separator_model))
+    outputs = vocal_separator.separate(input_audio_path)
+    
+    instrumental_audio_file = outputs[0]
+    instrumental_audio_full_path = os.path.join(audio_cache_path, instrumental_audio_file)
         
-        vocal_separator = Separator(
-            output_dir=audio_cache_path,
-            #output_single_stem="vocals",
-            model_file_dir=os.path.dirname(vocal_separator_model),
-        )
-        vocal_separator.load_model(os.path.basename(vocal_separator_model))
-        outputs = vocal_separator.separate(input_audio_path)
-        if production_type == 'music':
-            vocal_audio_file = outputs[-1]
-        else:
-            vocal_audio_file = outputs[0]
-            
-        vocal_audio_full_path = os.path.join(audio_cache_path, vocal_audio_file)
+    vocal_audio_file = outputs[-1]
+    vocal_audio_full_path = os.path.join(audio_cache_path, vocal_audio_file)
+    if production_type == "vocal":
         print(f"Cleaned audio dave to : {vocal_audio_full_path}")
         shutil.copy2(vocal_audio_full_path, output_vocal_path)
-    else:
-        vocal_audio_file = input_audio_path
+    elif production_type == "karaoke":
+        print(f"Cleaned audio dave to : {instrumental_audio_full_path}")
+        shutil.copy2(instrumental_audio_full_path, output_vocal_path)
 
     # Step 2: Lyrics Alignment
         # Detect language
@@ -80,7 +85,8 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
         if language == "ru":
             new_lang = "rus"
         else:
-            raise Exception(f"Unusual language {language}")
+            raise Exception(f"Unsupported language {language}. If you wish to use it, contact us in discord.")
+        print(f"Changing aligner config to {new_lang}")
         aligner_config_string = aligner_config_string.replace("eng", new_lang)
         print(f"Updated aligner config {aligner_config_string}")
     
@@ -98,9 +104,6 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
         
     # Step 3: Video Generation
     print('Building video...')
-    def get_audio_duration(audio_path):
-        probe = ffmpeg.probe(audio_path)
-        return float(probe['format']['duration'])
     def get_audio_duration(audio_path):
         probe = ffmpeg.probe(audio_path)
         return float(probe['format']['duration'])
@@ -137,7 +140,7 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
         
         ina = ffmpeg.input(input_audio_path)
         out = ffmpeg.output(ina, inv, output_file_path,
-                        vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path}",
+                        vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path},drawtext=text='{overlay_text}':fontcolor=white:fontsize='w/20':x=5:y=5",
                         preset="fast",
                         pix_fmt="yuv420p",
                         acodec="aac",

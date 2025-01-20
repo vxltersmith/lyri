@@ -297,7 +297,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         # Clean up temporary files
     except Exception as e:
         logger.error(f"Error in align command: {str(e)}")
-        await update.message.reply_text(f"An error occurred: {str(e)}")
+        await update.effective_chat.send_message(f"An error occurred: {str(e)}")
 
     context.user_data.clear()
     
@@ -333,7 +333,7 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
             missing_parts = "only one of a video file or an audio file (not both)"
 
         output_message = (
-            f"Oops! To proceed, I need {missing_parts}. "
+            f"To proceed, I need {missing_parts}. "
             "If you're unsure, feel free to ask for help! 😊"
         )
         
@@ -342,7 +342,7 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("Drop current context / Начать сначала", callback_data='drop_context')]
         ]
         
-        if not has_lyrics and user_data['audio_file']['title'] and user_data['audio_file']['performer']:
+        if not has_lyrics and has_audio and user_data['audio_file']['title'] and user_data['audio_file']['performer']:
             inline_keyboard.append(
                 [InlineKeyboardButton("Search for lyrics / Найти текст online (expirimental)", callback_data='search_lyrics')]
             )
@@ -507,7 +507,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 import argparse
 def main():
     parser = argparse.ArgumentParser(description="Telegram Bot")
-    parser.add_argument("--config", type=str, default="./configs/bot.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="./configs/default.yaml", help="Path to the configuration file")
     args = parser.parse_args()
     config_path = args.config
     if not os.path.exists(config_path):
