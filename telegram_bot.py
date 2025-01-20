@@ -2,8 +2,8 @@ import logging
 import yaml
 import os
 import base64
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
@@ -123,6 +123,7 @@ async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "YouTube audio downloaded! Now send me the lyrics text file."
         )
+        await try_start_processing(update, context)
             
     except Exception as e:
         logger.error(f"Error downloading YouTube video, you can try again later: {str(e)}")
@@ -178,7 +179,7 @@ async def save_image_file(context, image_file, input_cache, base_filename):
         await file.download_to_drive(image_path)
     return image_path
 
-async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_type: str) -> None:
     logger = logging.getLogger(__name__)
     config = context.bot_data["config"]
     
@@ -190,11 +191,11 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "1. Send the audio file\n"
             "2. Send the lyrics as a text file\n"
             "3. Send the image or video for background (optional) \n"
-            "4. Then use /align command"
+            "4. Then use buttons to start alignment process"
         )
         return
 
-    await update.message.reply_text("Starting lyrics alignment process...")
+    await update.effective_chat.send_message("Starting lyrics alignment process...")
     
     try:
         input_cache = config["paths"]["input_cache"]
@@ -222,7 +223,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 await download_file_in_chunks(context, video_file['file_id'], video_path)
             except:
-                await update.message.reply_text(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
+                await update.effective_chat.send_message(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
             source_file = video_file
                 
         lyrics_file = context.user_data['lyrics_file']
@@ -259,7 +260,8 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             config["aligner"]["aligner_model_path"],
             output_cache,
             input_cache,
-            background_file['file_name']
+            background_file['file_name'],
+            production_type
         )
         
         # Send the aligned video
@@ -268,26 +270,26 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         audio_path = result_paths['vocal_path']
         
         # Send the aligned video
-        await update.message.reply_text("Sending the aligned video...")
+        await update.effective_chat.send_message("Sending the aligned video...")
         with open(video_path, 'rb') as video:
-            await update.message.reply_video(
+            await update.effective_chat.send_video(
                 video,
                 caption="Here's your video with aligned lyrics!"
             )
             
         # Send the SRT subtitles file
-        await update.message.reply_text("Sending the subtitles file...")
+        await update.effective_chat.send_message("Sending the subtitles file...")
         with open(subtitles_path, 'rb') as srt:
-            await update.message.reply_document(
+            await update.effective_chat.send_document(
                 srt,
                 filename=f"{base_filename}.srt",
                 caption="Here are the synchronized subtitles (SRT file)"
             )
             
         # Send the separated audio file
-        await update.message.reply_text("Sending the audio file...")
+        await update.effective_chat.send_message("Sending the audio file...")
         with open(audio_path, 'rb') as audio:
-            await update.message.reply_audio(
+            await update.effective_chat.send_audio(
                 audio,
                 filename=f"{base_filename}.mp3",
                 caption="Here's the separated audio track"
@@ -298,25 +300,98 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"An error occurred: {str(e)}")
 
     context.user_data.clear()
+    
+def is_context_full(user_data: dict) -> bool:
+    # Ensure either video_file or audio_file is present, but not both, and lyrics_text is provided
+    has_video = 'video_file' in user_data
+    has_audio = 'audio_file' in user_data
+    has_lyrics = 'lyrics_file' in user_data
+    return has_lyrics and (has_video != has_audio)  # XOR: one of video or audio, not both
+
+async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_data = context.user_data
+
+    if not is_context_full(user_data):
+        # Identify missing keys
+        has_video = 'video_file' in user_data
+        has_audio = 'audio_file' in user_data
+        has_lyrics = 'lyrics_file' in user_data
+
+        # Map keys to user-friendly terms
+        key_labels = {
+            'video_file': "a video file",
+            'audio_file': "an audio file",
+            'lyrics_file': "the lyrics"
+        }
+
+        # Construct the missing parts message
+        if not has_lyrics:
+            missing_parts = "the lyrics"
+        elif not has_video and not has_audio:
+            missing_parts = "either a video or an audio file"
+        elif has_video and has_audio:
+            missing_parts = "only one of a video file or an audio file (not both)"
+
+        output_message = (
+            f"Oops! To proceed, I need {missing_parts}. "
+            "If you're unsure, feel free to ask for help! 😊"
+        )
+        
+        # Add inline button for dropping the context
+        inline_keyboard = [
+            [InlineKeyboardButton("Drop current context / Начать сначала", callback_data='drop_context')]
+        ]
+        
+        if not has_lyrics and user_data['audio_file']['title'] and user_data['audio_file']['performer']:
+            inline_keyboard.append(
+                [InlineKeyboardButton("Search for lyrics / Найти текст online (expirimental)", callback_data='search_lyrics')]
+            )
+    
+        markup = InlineKeyboardMarkup(inline_keyboard)
+
+        await update.message.reply_text(output_message, reply_markup=markup)
+        return
+
+    # If context is valid
+    ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
+    if 'background_file' not in user_data:
+        ready_text += "(Or you can send me an image for background)"
+    await update.message.reply_text(ready_text)
+    inline_keyboard = [
+        [InlineKeyboardButton("Music video", callback_data='music_align')],
+        [InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')]
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard)
+    await update.message.reply_text("Choose an option below to get started:", reply_markup=markup)
+
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     audio = update.message.audio or update.message.voice
     if audio:
+        orignal_file_name = getattr(audio, 'file_name', 'audio.wav')
+        extension = os.path.splitext(orignal_file_name)[-1]
+        file_name = f'audio_{uuid.uuid4()}{extension}'
         context.user_data['audio_file'] = {
             'file_id': audio.file_id,
-            'file_name': getattr(audio, 'file_name', 'audio.wav')
+            'file_name': file_name,
+            'is_audio_file': True,
+            'title': audio.title if hasattr(audio, 'title') else None,
+            'performer': audio.performer if hasattr(audio, 'performer') else None
         }
-        await update.message.reply_text("Audio file received! Now send me the lyrics text file.")
+        await update.message.reply_text("Audio file received! Keep going!")
+        await try_start_processing(update, context)
         
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     video = update.message.video
     if video:
-        context.user_data['video_file'] = {
+        key = 'background_file' if context.user_data.get('audio_file') else 'video_file'
+        context.user_data[key] = {
             'file_id': video.file_id,
             'file_name': f'video_{uuid.uuid4()}.mp4',
             'is_video_file': True
         }
-        await update.message.reply_text("Video file received! Now send me the lyrics text file.")
+        await update.message.reply_text("Video file received!")
+        await try_start_processing(update, context)
 
 def load_settings(config_path="./configs/bot.yaml"):
     with open(config_path, "r") as file:
@@ -342,7 +417,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             'file_name': 'lyrics.txt',
             'is_text_message': True
         }
-        await update.message.reply_text("Lyrics text received! Use /align to start the alignment process.")
+        await update.message.reply_text("Lyrics text received!")
+        await try_start_processing(update, context)
 
 # Update the file handling logic
 async def save_lyrics_file(context, lyrics_file, input_cache, base_filename):
@@ -370,7 +446,7 @@ async def handle_background_image(update: Update, context: ContextTypes.DEFAULT_
             'file_name': 'cover.webp',  # Stickers are typically in WebP format
             'is_sticker': True
         }
-        await update.message.reply_text("Cover image (sticker) received! Use /align when you're ready.")
+        await update.message.reply_text("Cover image (sticker) received!")
     else:
         photo = update.message.photo[-1] if update.message.photo else None
         if photo:
@@ -378,7 +454,28 @@ async def handle_background_image(update: Update, context: ContextTypes.DEFAULT_
                 'file_id': photo.file_id,
                 'file_name': 'background.jpg'
             }
-            await update.message.reply_text("Background image received! You can now use /align to start the alignment process.")
+            await update.message.reply_text("Background image received!")
+    await try_start_processing(update, context)
+
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button click
+
+    # Handle each callback data case
+    if query.data == 'music_align':
+        await query.edit_message_text("You selected: Music video 🎥. Processing will begin soon!")
+        await align(update, context, 'music')
+    elif query.data == 'karaoke_align':
+        await query.edit_message_text("You selected: Karaoke video 🎤. Processing will begin soon!")
+        await align(update, context, 'karaoke')
+    elif query.data == 'cancel':
+        await query.edit_message_text("Processing cancelled. You can start a new session now. 😊")
+    elif query.data == 'drop_context':
+        context.user_data.clear()  # Clear user data
+        await query.edit_message_text("Context cleared. You can start fresh now. 😊")
+    else:
+        await query.edit_message_text("Unknown option. Please try again.")
+
 
 def load_settings(config_path="./configs/bot.yaml"):
     with open(config_path, "r") as file:
@@ -407,8 +504,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger = logging.getLogger(__name__)
     logger.info(f"User {update.message.from_user.id} started the bot.")
 
+import argparse
 def main():
-    config_path = "./configs/bot.yaml"
+    parser = argparse.ArgumentParser(description="Telegram Bot")
+    parser.add_argument("--config", type=str, default="./configs/bot.yaml", help="Path to the configuration file")
+    args = parser.parse_args()
+    config_path = args.config
     if not os.path.exists(config_path):
         print(f"Configuration file not found: {config_path}")
         return
@@ -436,7 +537,7 @@ def main():
     app.bot_data["welcome_message"] = settings["bot"]["welcome_message"]
     app.bot_data["config"] = settings
 
-    app.add_handler(CommandHandler("align", lambda update, context: align(update, context)))
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
     app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))

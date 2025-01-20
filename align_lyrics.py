@@ -9,6 +9,7 @@ import shutil
 
 def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None, 
         output_cache='./aligner_cache', input_cache='./inputs_cache/', background_file_name=None,
+        production_type = 'music',
         aligner_config_string = "task_language=eng|os_task_file_format=srt|is_text_type=plain|os_task_adjust_boundary_nonspeech_min=1.0|os_task_vad_threshold=0.5"):
     
     input_audio_path = os.path.join(input_cache, audio_file_name)
@@ -56,7 +57,11 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
         )
         vocal_separator.load_model(os.path.basename(vocal_separator_model))
         outputs = vocal_separator.separate(input_audio_path)
-        vocal_audio_file = outputs[-1]
+        if production_type == 'music':
+            vocal_audio_file = outputs[-1]
+        else:
+            vocal_audio_file = outputs[0]
+            
         vocal_audio_full_path = os.path.join(audio_cache_path, vocal_audio_file)
         print(f"Cleaned audio dave to : {vocal_audio_full_path}")
         shutil.copy2(vocal_audio_full_path, output_vocal_path)
@@ -96,7 +101,6 @@ def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None,
     def get_audio_duration(audio_path):
         probe = ffmpeg.probe(audio_path)
         return float(probe['format']['duration'])
-        print('Building video...')
     def get_audio_duration(audio_path):
         probe = ffmpeg.probe(audio_path)
         return float(probe['format']['duration'])
