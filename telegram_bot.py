@@ -5,6 +5,10 @@ import base64
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
+from aiogram import Bot
+
 from align_lyrics import align_lyrics
 import asyncio
 import tempfile
@@ -13,6 +17,48 @@ from yt_dlp import YoutubeDL
 import re
 import uuid
 
+
+import os
+import aiohttp
+import aiofiles
+
+import subprocess
+import time
+
+def start_local_server(api_id, api_hash):
+    try:
+        # Start the local server
+        subprocess.Popen([
+            "./telegram-bot-api/build/telegram-bot-api",
+            "--local",
+            f"--api-id={api_id}",
+            f"--api-hash={api_hash}"
+        ])
+        # Wait for the server to start
+        time.sleep(5)  # Adjust the sleep time as needed
+        print("Local server started successfully.")
+    except Exception as e:
+        print(f"Failed to start local server: {e}")
+
+
+async def download_file_in_chunks(context, file_id, file_path, chunk_size=1024 * 1024):
+    file = await context.bot.get_file(file_id)
+    file_url = file.file_path
+    
+    try:
+        await file.download_to_drive(file_path)
+    except Exception as e:
+        print("Failed to download file with main API, fall back on web download")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as response:
+                async with aiofiles.open(file_path, 'wb') as f:
+                    while True:
+                        chunk = await response.content.read(chunk_size)
+                        if not chunk:
+                            break
+                        await f.write(chunk)
+    except Exception as e:
+        print(f"Failed to download file: {e}")
 
 def is_youtube_url(url):
     youtube_regex = (
@@ -136,7 +182,9 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger = logging.getLogger(__name__)
     config = context.bot_data["config"]
     
-    if not context.user_data.get('audio_file') or not context.user_data.get('lyrics_file'):
+    track_recieved = context.user_data.get('audio_file') or  context.user_data.get('video_file')
+    
+    if not track_recieved or not context.user_data.get('lyrics_file'):
         await update.message.reply_text(
             "Please send both an audio file and a lyrics file first.\n"
             "1. Send the audio file\n"
@@ -155,30 +203,45 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         os.makedirs(input_cache, exist_ok=True)
         os.makedirs(output_cache, exist_ok=True)
 
-        audio_file = context.user_data['audio_file']
-        base_filename = os.path.splitext(audio_file['file_name'])[0]
-        
-        audio_path = os.path.join(input_cache, audio_file['file_name'])
-        if audio_file.get('is_youtube'):
-            audio_path = audio_file['file_path']
-        else:
-            file = await context.bot.get_file(audio_file['file_id'])
-            await file.download_to_drive(audio_path)
-        
+        audio_file = context.user_data.get('audio_file')
+        video_file = context.user_data.get('video_file')
+        base_filename = None
+
+        if audio_file:
+            base_filename = os.path.splitext(audio_file['file_name'])[0]
+            audio_path = os.path.join(input_cache, audio_file['file_name'])
+            if audio_file.get('is_youtube'):
+                audio_path = audio_file['file_path']
+            else:
+                file = await context.bot.get_file(audio_file['file_id'])
+                await file.download_to_drive(audio_path)
+            source_file = audio_file
+        elif video_file:
+            base_filename = os.path.splitext(video_file['file_name'])[0]
+            video_path = os.path.join(input_cache, video_file['file_name'])
+            try:
+                await download_file_in_chunks(context, video_file['file_id'], video_path)
+            except:
+                await update.message.reply_text(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
+            source_file = video_file
+                
         lyrics_file = context.user_data['lyrics_file']
         lyrics_filename = f"{base_filename}.txt"
         lyrics_file['file_name'] = lyrics_filename
         lyrics_path = await save_lyrics_file(context, lyrics_file, input_cache, base_filename)
         
-        if not audio_file.get('is_youtube'):
-            background_file = context.user_data.get('background_file')
-            background_path = None
-            if background_file:
-                background_file = context.user_data['background_file']
-                background_filename = f"{base_filename}.jpg"
-                background_path = os.path.join(input_cache, background_filename)
-                image_path = await save_image_file(context, background_file, input_cache, base_filename)
-            else:
+        background_file = context.user_data.get('background_file')
+        background_path = None
+        if background_file:
+            background_file = context.user_data['background_file']
+            background_filename = f"{base_filename}.jpg"
+            background_path = os.path.join(input_cache, background_filename)
+            await save_image_file(context, background_file, input_cache, base_filename)
+            background_file['file_name'] = background_filename
+        else:
+            if source_file.get('is_youtube') or source_file.get("is_video_file"):
+                background_file = source_file
+            else:    
                 default_bg = config["aligner"]["default_background_image"]
                 if os.path.exists(default_bg):
                     background_filename = f"{base_filename}.jpg"
@@ -186,20 +249,19 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     import shutil
                     shutil.copy2(default_bg, background_path)
                     background_file = {}
-            background_file['file_name'] = background_filename
-        else:
-            background_file = audio_file
+                background_file['file_name'] = background_filename
 
         result_paths = await asyncio.get_event_loop().run_in_executor(
             None,
             align_lyrics,
-            audio_file['file_name'],
+            source_file['file_name'],
             lyrics_file['file_name'],
             config["aligner"]["aligner_model_path"],
             output_cache,
             input_cache,
             background_file['file_name']
-        )    
+        )
+        
         # Send the aligned video
         video_path = result_paths['video_path']
         subtitles_path = result_paths['subtitles_path']
@@ -245,6 +307,16 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             'file_name': getattr(audio, 'file_name', 'audio.wav')
         }
         await update.message.reply_text("Audio file received! Now send me the lyrics text file.")
+        
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    video = update.message.video
+    if video:
+        context.user_data['video_file'] = {
+            'file_id': video.file_id,
+            'file_name': f'video_{uuid.uuid4()}.mp4',
+            'is_video_file': True
+        }
+        await update.message.reply_text("Video file received! Now send me the lyrics text file.")
 
 def load_settings(config_path="./configs/bot.yaml"):
     with open(config_path, "r") as file:
@@ -340,22 +412,34 @@ def main():
     if not os.path.exists(config_path):
         print(f"Configuration file not found: {config_path}")
         return
-
     settings = load_settings(config_path)
-    bot_token = str(settings["bot"]["token"])
-    settings["bot"]["token"] = ""
-    welcome_message = settings["bot"]["welcome_message"]
     
     setup_logging(settings["log"])
 
-    app = ApplicationBuilder().token(bot_token).build()
+    app_id = settings["bot"].get("APP_ID")
+    app_hash = settings["bot"].get("API_HASH")
+    bot_token = str(settings["bot"]["token"])
+    bot = None
+    if app_id and app_hash:
+        # Start the local server
+        start_local_server(app_id, app_hash)
+        # Configure the bot to use the local server
+        session = AiohttpSession(api=TelegramAPIServer.from_base("http://localhost:8081", is_local=True))
+        bot = Bot(token=bot_token, session=session)
+    
+    app = ApplicationBuilder()
+    if bot:
+        app = app.bot(bot).build()
+    else:
+        app = app.token(bot_token).build()
 
-    app.bot_data["welcome_message"] = welcome_message
+    app.bot_data["welcome_message"] = settings["bot"]["welcome_message"]
     app.bot_data["config"] = settings
 
     app.add_handler(CommandHandler("align", lambda update, context: align(update, context)))
     app.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
     app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE | filters.Sticker.ALL, handle_background_image))
     # YouTube handler should come before the general text handler
     app.add_handler(MessageHandler(

@@ -8,4 +8,7 @@ python-telegram-bot
 pyyaml
 yt_dlp
 Pillow>=9.0.0
-Wand>=0.6.0
+Wand>=0.6.
+aiofiles
+aiohttp
+aiogram
