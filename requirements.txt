@@ -12,3 +12,4 @@ Wand>=0.6.
 aiofiles
 aiohttp
 aiogram
+pysub-parser

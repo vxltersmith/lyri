@@ -9,7 +9,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram import Bot
 
-from align_lyrics import align_lyrics
+from align_lyrics import Config, LyricsVideoGenerator
 import asyncio
 import tempfile
 from dataclasses import dataclass
@@ -127,7 +127,15 @@ async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     except Exception as e:
         logger.error(f"Error downloading YouTube video, you can try again later: {str(e)}")
-        await update.message.reply_text(f"Failed to download YouTube video: {str(e)}")
+        
+        inline_keyboard = [
+            [InlineKeyboardButton("Retry download video", callback_data='yt_retry')],
+            [InlineKeyboardButton("Drop current context / Начать сначала", callback_data='drop_context')]
+        ]
+    
+        markup = InlineKeyboardMarkup(inline_keyboard)
+        
+        await update.message.reply_text(f"Failed to download YouTube video: {str(e)}", reply_markup=markup)
         
 async def save_image_file(context, image_file, input_cache, base_filename):
     image_filename = f"{base_filename}.jpg"
@@ -233,12 +241,18 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         
         background_file = context.user_data.get('background_file')
         background_path = None
-        if background_file:
+        if background_file and not background_file.get('is_video_file'):
             background_file = context.user_data['background_file']
             background_filename = f"{base_filename}.jpg"
             background_path = os.path.join(input_cache, background_filename)
             await save_image_file(context, background_file, input_cache, base_filename)
             background_file['file_name'] = background_filename
+        elif background_file and background_file.get('is_video_file'):
+            video_path = os.path.join(input_cache, background_file['file_name'])
+            try:
+                await download_file_in_chunks(context, background_file['file_id'], video_path)
+            except:
+                await update.effective_chat.send_message(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
         else:
             if source_file.get('is_youtube') or source_file.get("is_video_file"):
                 background_file = source_file
@@ -251,23 +265,31 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
                     shutil.copy2(default_bg, background_path)
                     background_file = {}
                 background_file['file_name'] = background_filename
+                
+        config = context.bot_data['aligner_config']
+        generator = context.bot_data['aligner_generator']
+        
+        data = {
+            'audio_file_name': source_file['file_name'],
+            'text_file_name': lyrics_file['file_name'],
+            'background_file_name': background_file['file_name'],
+            'input_cache': input_cache,
+            'output_cache': output_cache,
+            'production_type': production_type   
+        }
+        config.from_user_data(data)
 
         result_paths = await asyncio.get_event_loop().run_in_executor(
             None,
-            align_lyrics,
-            source_file['file_name'],
-            lyrics_file['file_name'],
-            config["aligner"]["aligner_model_path"],
-            output_cache,
-            input_cache,
-            background_file['file_name'],
-            production_type
+           generator.generate
         )
         
         # Send the aligned video
         video_path = result_paths['video_path']
         subtitles_path = result_paths['subtitles_path']
-        audio_path = result_paths['vocal_path']
+        vocal_audio_full_path = result_paths['vocal_path']
+        instrumental_audio_full_path = result_paths['instrumental_path']
+        input_audio_path = result_paths['audio_path']
         
         # Send the aligned video
         await update.effective_chat.send_message("Sending the aligned video...")
@@ -287,19 +309,40 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
             )
             
         # Send the separated audio file
-        await update.effective_chat.send_message("Sending the audio file...")
-        with open(audio_path, 'rb') as audio:
+        await update.effective_chat.send_message("Sending vocal audio file...")
+        with open(vocal_audio_full_path, 'rb') as audio:
             await update.effective_chat.send_audio(
                 audio,
                 filename=f"{base_filename}.mp3",
-                caption="Here's the separated audio track"
+                caption="Here's the vocal audio track"
             )
+        
+        # Send the instrumental audio file
+        await update.effective_chat.send_message("Sending instrumental audio file...")
+        with open(instrumental_audio_full_path, 'rb') as audio:
+            await update.effective_chat.send_audio(
+                audio,
+                filename=f"{base_filename}_instrumental.mp3",
+                caption="Here's the instrumental audio track"
+            )
+            
+        if source_file.get('is_youtube') or video_file:    
+            # Send the original audio file
+            await update.effective_chat.send_message("Sending original audio file...")
+            with open(input_audio_path, 'rb') as audio:
+                await update.effective_chat.send_audio(
+                    audio,
+                    filename=f"{base_filename}.mp3",
+                    caption="Here's the original audio track"
+                )
+            
         # Clean up temporary files
+        context.user_data.clear()
     except Exception as e:
         logger.error(f"Error in align command: {str(e)}")
         await update.effective_chat.send_message(f"An error occurred: {str(e)}")
-
-    context.user_data.clear()
+        await try_start_processing(update, context)
+    
     
 def is_context_full(user_data: dict) -> bool:
     # Ensure either video_file or audio_file is present, but not both, and lyrics_text is provided
@@ -316,13 +359,6 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         has_video = 'video_file' in user_data
         has_audio = 'audio_file' in user_data
         has_lyrics = 'lyrics_file' in user_data
-
-        # Map keys to user-friendly terms
-        key_labels = {
-            'video_file': "a video file",
-            'audio_file': "an audio file",
-            'lyrics_file': "the lyrics"
-        }
 
         # Construct the missing parts message
         if not has_lyrics:
@@ -342,7 +378,7 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("Drop current context / Начать сначала", callback_data='drop_context')]
         ]
         
-        if not has_lyrics and has_audio and user_data['audio_file']['title'] and user_data['audio_file']['performer']:
+        if not has_lyrics and (has_audio and not user_data['audio_file'].get("is_youtube", False) and user_data['audio_file']['title'] and user_data['audio_file']['performer']):
             inline_keyboard.append(
                 [InlineKeyboardButton("Search for lyrics / Найти текст online (expirimental)", callback_data='search_lyrics')]
             )
@@ -352,17 +388,25 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(output_message, reply_markup=markup)
         return
 
+    bot_config = context.bot_data['config']
+    config = Config(input_cache=bot_config['paths']['input_cache'], 
+        output_cache=bot_config['paths']['output_cache'], 
+        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
+    generator = LyricsVideoGenerator(config)
+    context.bot_data['aligner_config'] = config
+    context.bot_data['aligner_generator'] = generator
+
     # If context is valid
     ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
     if 'background_file' not in user_data:
         ready_text += "(Or you can send me an image for background)"
-    await update.message.reply_text(ready_text)
+    await update.effective_chat.send_message(ready_text)
     inline_keyboard = [
         [InlineKeyboardButton("Music video", callback_data='music_align')],
         [InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')]
     ]
     markup = InlineKeyboardMarkup(inline_keyboard)
-    await update.message.reply_text("Choose an option below to get started:", reply_markup=markup)
+    await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
 
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -473,6 +517,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == 'drop_context':
         context.user_data.clear()  # Clear user data
         await query.edit_message_text("Context cleared. You can start fresh now. 😊")
+    elif query.data == 'yt_retry':
+        await query.edit_message_text("Retrying YouTube download. Please wait...")
+        await download_youtube_video(update, context, context.user_data['yt_url'])
     else:
         await query.edit_message_text("Unknown option. Please try again.")
 
