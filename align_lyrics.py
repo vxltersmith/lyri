@@ -117,16 +117,22 @@ class LyricsAligner:
 
         return sync_file_path
 
+import os
+import ffmpeg
+import logging
+
 class VideoBuilder:
     def __init__(self, config):
         self.config = config
-        self.default_bacground_path = os.path.join(self.config.input_cache, 'default.jpg')
+        self.default_background_path = os.path.join(self.config.input_cache, 'default.jpg')
 
     def get_audio_duration(self, audio_path):
+        """Get the duration of the audio."""
         probe = ffmpeg.probe(audio_path)
         return float(probe['format']['duration'])
 
     def get_video_frame_rate(self, video_path):
+        """Get the frame rate of the video."""
         try:
             probe = ffmpeg.probe(video_path)
             video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
@@ -142,29 +148,45 @@ class VideoBuilder:
             logging.warning(f"Warning: Could not determine frame rate, using default. Error: {e}")
             return 24
 
+    def strip_audio_from_video(self, video_path, output_path):
+        """Strip audio from a video file."""
+        try:
+            ffmpeg.input(video_path).output(output_path, an=None, vcodec='copy').run()
+            logging.info(f"Audio stripped from video: {output_path}")
+            return output_path
+        except ffmpeg.Error as e:
+            logging.error(f"Error stripping audio from video: {e.stderr.decode()}")
+            return None
+
     def build_video(self, sync_file_path, input_audio_path):
+        """Build the final video."""
         output_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}_aligned.mp4")
-        background_path = os.path.join(self.config.input_cache, self.config.background_file_name) if self.config.background_file_name else self.default_bacground_path
+        background_path = (
+            os.path.join(self.config.input_cache, self.config.background_file_name)
+            if self.config.background_file_name else self.default_background_path
+        )
 
         frame_rate = self.get_video_frame_rate(background_path)
         duration = self.get_audio_duration(input_audio_path)
 
         try:
+            # Check if the background is an image or video
             is_image = background_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
 
+            # Process background input
             if is_image:
                 inv = ffmpeg.input(background_path, loop=1, t=duration, framerate=frame_rate)
             else:
+                # If background is a video, strip its audio first
+                stripped_video_path = os.path.join(self.config.output_cache, "background_no_audio.mp4")
+                background_path = self.strip_audio_from_video(background_path, stripped_video_path)
                 inv = ffmpeg.input(background_path, stream_loop=-1)
-                inv = ffmpeg.output(inv, "pipe:", format="mp4", an=None)
-                try:
-                    out, err = inv.run(capture_stdout=True, capture_stderr=True)
-                except ffmpeg.Error as e:
-                    logging.error(f"FFmpeg error: {e.stderr.decode()}")
 
+            # Combine background and audio
             ina = ffmpeg.input(input_audio_path)
-            out = ffmpeg.output(inv, ina, output_file_path,
-                vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path},drawtext=text='{self.config.overlay_text}':fontcolor=white:fontsize='w/20':x=5:y=5",
+            out = ffmpeg.output(
+                inv, ina, output_file_path,
+                vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path},drawtext=text='{self.config.overlay_text}':fontcolor=white:fontsize='w/40':x=5:y=5",
                 preset="fast",
                 pix_fmt="yuv420p",
                 acodec="aac",
@@ -176,7 +198,7 @@ class VideoBuilder:
             logging.info(f"Video created successfully: {output_file_path}")
             return output_file_path
         except Exception as e:
-            logging.error(f"Error occurred: {e}")
+            logging.error(f"Error occurred during video creation: {e}")
             return None
 
 class LyricsVideoGenerator:
@@ -191,6 +213,13 @@ class LyricsVideoGenerator:
         if not vocal_audio_full_path:
             logging.error("Vocal separation failed.")
             return
+        if self.config.production_type == "separate_audio":
+            result = {
+                'vocal_path': vocal_audio_full_path,
+                'instrumental_path': instrumental_audio_full_path,
+                'audio_path': input_audio_path,
+            }
+            return result
 
         sync_file_path = self.lyrics_aligner.align_lyrics(vocal_audio_full_path)
         if not sync_file_path:
