@@ -2,7 +2,7 @@ import logging
 import yaml
 import os
 import base64
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -11,8 +11,6 @@ from aiogram import Bot
 
 from align_lyrics import Config, LyricsVideoGenerator
 import asyncio
-import tempfile
-from dataclasses import dataclass
 from yt_dlp import YoutubeDL
 import re
 import uuid
@@ -107,6 +105,14 @@ async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         output_path = os.path.join(input_cache, file_name)
         logger.info(f'Downloading YouTube audio to {output_path}')
         
+        context.user_data['audio_file'] = {
+            'file_path': output_path,
+            'file_name': file_name,
+            'is_youtube': True,
+            'complited': False,
+            'yt_url': message_text
+        }
+        
         await asyncio.get_event_loop().run_in_executor(
             None,
             download_youtube_video,
@@ -117,7 +123,8 @@ async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data['audio_file'] = {
             'file_path': output_path,
             'file_name': file_name,
-            'is_youtube': True
+            'is_youtube': True,
+            'complited': True,
         }
         
         await update.message.reply_text(
@@ -190,19 +197,7 @@ async def save_image_file(context, image_file, input_cache, base_filename):
 async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_type: str) -> None:
     logger = logging.getLogger(__name__)
     config = context.bot_data["config"]
-    
-    track_recieved = context.user_data.get('audio_file') or  context.user_data.get('video_file')
-    
-    if not track_recieved or not context.user_data.get('lyrics_file'):
-        await update.message.reply_text(
-            "Please send both an audio file and a lyrics file first.\n"
-            "1. Send the audio file\n"
-            "2. Send the lyrics as a text file\n"
-            "3. Send the image or video for background (optional) \n"
-            "4. Then use buttons to start alignment process"
-        )
-        return
-
+    logger.info(f"Creting {production_type} video...")
     await update.effective_chat.send_message("Starting lyrics alignment process...")
     
     try:
@@ -234,10 +229,11 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
                 await update.effective_chat.send_message(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
             source_file = video_file
                 
-        lyrics_file = context.user_data['lyrics_file']
-        lyrics_filename = f"{base_filename}.txt"
-        lyrics_file['file_name'] = lyrics_filename
-        lyrics_path = await save_lyrics_file(context, lyrics_file, input_cache, base_filename)
+        lyrics_file = context.user_data.get('lyrics_file')
+        if lyrics_file:
+            lyrics_filename = f"{base_filename}.txt"
+            lyrics_file['file_name'] = lyrics_filename
+            lyrics_path = await save_lyrics_file(context, lyrics_file, input_cache, base_filename)
         
         background_file = context.user_data.get('background_file')
         background_path = None
@@ -271,12 +267,13 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         
         data = {
             'audio_file_name': source_file['file_name'],
-            'text_file_name': lyrics_file['file_name'],
-            'background_file_name': background_file['file_name'],
             'input_cache': input_cache,
             'output_cache': output_cache,
             'production_type': production_type   
         }
+        if not production_type == 'separate_audio':
+            data['text_file_name'] = lyrics_file['file_name']
+            data['background_file_name'] = background_file['file_name'],
         config.from_user_data(data)
 
         result_paths = await asyncio.get_event_loop().run_in_executor(
@@ -285,48 +282,49 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         )
         
         # Send the aligned video
-        video_path = result_paths['video_path']
-        subtitles_path = result_paths['subtitles_path']
-        vocal_audio_full_path = result_paths['vocal_path']
-        instrumental_audio_full_path = result_paths['instrumental_path']
-        input_audio_path = result_paths['audio_path']
+        video_path = result_paths.get('video_path')
+        subtitles_path = result_paths.get('subtitles_path')
+        vocal_audio_full_path = result_paths.get('vocal_path')
+        instrumental_audio_full_path = result_paths.get('instrumental_path')
+        input_audio_path = result_paths.get('audio_path')
         
-        # Send the aligned video
-        await update.effective_chat.send_message("Sending the aligned video...")
-        with open(video_path, 'rb') as video:
-            await update.effective_chat.send_video(
-                video,
-                caption="Here's your video with aligned lyrics!"
-            )
+        if video_path: 
+            # Send the aligned video
+            await update.effective_chat.send_message("Sending the aligned video...")
+            with open(video_path, 'rb') as video:
+                await update.effective_chat.send_video(
+                    video,
+                    caption="Here's your video with aligned lyrics!"
+                )
+        if subtitles_path:
+            # Send the SRT subtitles file
+            await update.effective_chat.send_message("Sending the subtitles file...")
+            with open(subtitles_path, 'rb') as srt:
+                await update.effective_chat.send_document(
+                    srt,
+                    filename=f"{base_filename}.srt",
+                    caption="Here are the synchronized subtitles (SRT file)"
+                )
+        if vocal_audio_full_path:
+            # Send the separated audio file
+            await update.effective_chat.send_message("Sending vocal audio file...")
+            with open(vocal_audio_full_path, 'rb') as audio:
+                await update.effective_chat.send_audio(
+                    audio,
+                    filename=f"{base_filename}.mp3",
+                    caption="Here's the vocal audio track"
+                )
+        if instrumental_audio_full_path:
+            # Send the instrumental audio file
+            await update.effective_chat.send_message("Sending instrumental audio file...")
+            with open(instrumental_audio_full_path, 'rb') as audio:
+                await update.effective_chat.send_audio(
+                    audio,
+                    filename=f"{base_filename}_instrumental.mp3",
+                    caption="Here's the instrumental audio track"
+                )
             
-        # Send the SRT subtitles file
-        await update.effective_chat.send_message("Sending the subtitles file...")
-        with open(subtitles_path, 'rb') as srt:
-            await update.effective_chat.send_document(
-                srt,
-                filename=f"{base_filename}.srt",
-                caption="Here are the synchronized subtitles (SRT file)"
-            )
-            
-        # Send the separated audio file
-        await update.effective_chat.send_message("Sending vocal audio file...")
-        with open(vocal_audio_full_path, 'rb') as audio:
-            await update.effective_chat.send_audio(
-                audio,
-                filename=f"{base_filename}.mp3",
-                caption="Here's the vocal audio track"
-            )
-        
-        # Send the instrumental audio file
-        await update.effective_chat.send_message("Sending instrumental audio file...")
-        with open(instrumental_audio_full_path, 'rb') as audio:
-            await update.effective_chat.send_audio(
-                audio,
-                filename=f"{base_filename}_instrumental.mp3",
-                caption="Here's the instrumental audio track"
-            )
-            
-        if source_file.get('is_youtube') or video_file:    
+        if input_audio_path and source_file.get('is_youtube') or video_file:    
             # Send the original audio file
             await update.effective_chat.send_message("Sending original audio file...")
             with open(input_audio_path, 'rb') as audio:
@@ -378,6 +376,11 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("Drop current context / Начать сначала", callback_data='drop_context')]
         ]
         
+        if has_audio or has_video:
+            inline_keyboard.append(
+                [InlineKeyboardButton("Separate audio / Разделить на дорожки", callback_data='separate_audio')]
+            )
+        
         if not has_lyrics and (has_audio and not user_data['audio_file'].get("is_youtube", False) and user_data['audio_file']['title'] and user_data['audio_file']['performer']):
             inline_keyboard.append(
                 [InlineKeyboardButton("Search for lyrics / Найти текст online (expirimental)", callback_data='search_lyrics')]
@@ -385,7 +388,7 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
     
         markup = InlineKeyboardMarkup(inline_keyboard)
 
-        await update.message.reply_text(output_message, reply_markup=markup)
+        await update.effective_chat.send_message(output_message, reply_markup=markup)
         return
 
     bot_config = context.bot_data['config']
@@ -512,6 +515,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == 'karaoke_align':
         await query.edit_message_text("You selected: Karaoke video 🎤. Processing will begin soon!")
         await align(update, context, 'karaoke')
+    elif query.data == 'separate_audio':
+        await query.edit_message_text("You selected: Separate audio 🎤. Processing will begin soon!")
+        bot_config = context.bot_data['config']
+        config = Config(input_cache=bot_config['paths']['input_cache'], 
+        output_cache=bot_config['paths']['output_cache'], 
+        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
+        generator = LyricsVideoGenerator(config)
+        context.bot_data['aligner_config'] = config
+        context.bot_data['aligner_generator'] = generator
+        await align(update, context, 'separate_audio')
     elif query.data == 'cancel':
         await query.edit_message_text("Processing cancelled. You can start a new session now. 😊")
     elif query.data == 'drop_context':
@@ -519,7 +532,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Context cleared. You can start fresh now. 😊")
     elif query.data == 'yt_retry':
         await query.edit_message_text("Retrying YouTube download. Please wait...")
-        await download_youtube_video(update, context, context.user_data['yt_url'])
+        await handle_youtube(update, context) 
     else:
         await query.edit_message_text("Unknown option. Please try again.")
 
@@ -576,10 +589,7 @@ def main():
         bot = Bot(token=bot_token, session=session)
     
     app = ApplicationBuilder()
-    if bot:
-        app = app.bot(bot).build()
-    else:
-        app = app.token(bot_token).build()
+    app = app.token(bot_token).build()
 
     app.bot_data["welcome_message"] = settings["bot"]["welcome_message"]
     app.bot_data["config"] = settings
