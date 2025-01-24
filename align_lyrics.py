@@ -1,187 +1,230 @@
+import os
+import shutil
+import ffmpeg
+import langid
+from io import BytesIO
 from aeneas.executetask import ExecuteTask
 from aeneas.task import Task
-from io import BytesIO
-import langid
 from audio_separator.separator import Separator
-import os
-import ffmpeg
-import shutil
+import logging
+import argparse
 
-def align_lyrics(audio_file_name, text_file_name, vocal_separator_model=None, 
-        output_cache='./aligner_cache', input_cache='./inputs_cache/', background_file_name=None,
-        production_type = 'music',
-        aligner_config_string = "task_language=eng|os_task_file_format=srt|is_text_type=plain|os_task_adjust_boundary_nonspeech_min=1.0|os_task_vad_threshold=0.5",
-        overlay_text="by Lyri.ai"):
-    
-    input_audio_path = os.path.join(input_cache, audio_file_name)
-    output_file_path = os.path.join(output_cache, f"{audio_file_name}_aligned.mp4")
-    output_vocal_path = os.path.join(output_cache, f"{audio_file_name}_vocal.wav")
-      
-    input_text_path = os.path.join(input_cache, text_file_name)
-    sync_file_path = os.path.join(output_cache, f"{audio_file_name}.srt")
-    audio_cache_path = os.path.join(output_cache, 'audios')
-    
-    if os.path.exists(output_file_path):
-        return {
-            'video_path': output_file_path,
-            'vocal_path': output_vocal_path,
-            'subtitles_path': sync_file_path
-        }
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    if background_file_name:
-        background_path = os.path.join(input_cache, background_file_name)
-    else:
-        background_path = os.path.join(input_cache, 'default.jpg')
-
-    os.makedirs(audio_cache_path, exist_ok=True)
-
-    # Step 1: Vocal Separation
-    if not vocal_separator_model:
-        raise ValueError('Vocal separator model is not specified')
+class Config:
+    def __init__(self, input_cache, output_cache, vocal_separator_model = "./checkpoints/vocal_separator/Kim_Vocal_2.onnx"):
+        self.audio_file_name = None
+        self.text_file_name = None
+        self.background_file_name = None
+        self.vocal_separator_model = vocal_separator_model
+        self.input_cache = input_cache
+        self.output_cache = output_cache
+        self.aligner_config_string = "task_language=eng|os_task_file_format=srt|is_text_type=plain|os_task_vad_threshold=0.5|os_task_file_force_overwrite=1"
+        self.overlay_text = "by Lyri.ai"
+        self.production_type = 'music'
     
-    print('Performing vocal separation...')
-    
-    if not input_audio_path.endswith('.wav'):
-        def convert_mp3_to_wav(input_mp3_path, output_wav_path):
-            if os.path.exists(output_wav_path):
-                return output_wav_path
-            try:
-                ffmpeg.input(input_mp3_path).output(output_wav_path).run()
-                print(f"Conversion successful: {output_wav_path}")
-            except ffmpeg.Error as e:
-                print(f"Error occurred during conversion: {e.stderr.decode('utf8')}")
+    def from_user_data(self, user_data: dict):
+        self.audio_file_name = user_data.get('audio_file_name')
+        self.text_file_name = user_data.get('text_file_name')
+        self.background_file_name = user_data.get('background_file_name')
+        self.input_cache = user_data.get('input_cache')
+        self.output_cache = user_data.get('output_cache')
+        self.production_type = user_data.get('production_type', 'music')
+        
+    def from_args(self, args):
+        self.audio_file_name = args.audio
+        self.text_file_name = args.text
+        self.background_file_name = args.background
+        self.vocal_separator_model = args.vocal_separator_model
+        self.input_cache = args.inputs_cache
+        self.output_cache = args.outputs_cache
+
+class AudioProcessor:
+    def __init__(self, config):
+        self.config = config
+        self.audio_cache_path = os.path.join(self.config.input_cache, 'audio_cache')
+        vocal_separator = Separator(
+            output_dir=self.audio_cache_path,
+            model_file_dir=os.path.dirname(self.config.vocal_separator_model),
+        )
+        vocal_separator.load_model(os.path.basename(self.config.vocal_separator_model))
+        self.vocal_separator = vocal_separator
+
+    def convert_mp3_to_wav(self, input_mp3_path, output_wav_path):
+        if os.path.exists(output_wav_path):
             return output_wav_path
-        input_audio_path = convert_mp3_to_wav(input_audio_path, input_audio_path+'.wav')
-    
-    vocal_separator = Separator(
-        output_dir=audio_cache_path,
-        #output_single_stem="vocals",
-        model_file_dir=os.path.dirname(vocal_separator_model),
-    )
-    vocal_separator.load_model(os.path.basename(vocal_separator_model))
-    outputs = vocal_separator.separate(input_audio_path)
-    
-    instrumental_audio_file = outputs[0]
-    instrumental_audio_full_path = os.path.join(audio_cache_path, instrumental_audio_file)
-        
-    vocal_audio_file = outputs[-1]
-    vocal_audio_full_path = os.path.join(audio_cache_path, vocal_audio_file)
-    if production_type == "vocal":
-        print(f"Cleaned audio dave to : {vocal_audio_full_path}")
-        shutil.copy2(vocal_audio_full_path, output_vocal_path)
-    elif production_type == "karaoke":
-        print(f"Cleaned audio dave to : {instrumental_audio_full_path}")
-        shutil.copy2(instrumental_audio_full_path, output_vocal_path)
+        try:
+            ffmpeg.input(input_mp3_path).output(output_wav_path).run()
+            logging.info(f"Conversion successful: {output_wav_path}")
+        except ffmpeg.Error as e:
+            logging.error(f"Error occurred during conversion: {e.stderr.decode('utf8')}")
+        return output_wav_path
 
-    # Step 2: Lyrics Alignment
-        # Detect language
-    print("Detecting lyrics language...")
-    with open(input_text_path, "r", encoding="utf-8") as f:
-        text = f.read()
-    language, confidence = langid.classify(text)
-    print(f"Detected language {language} with conf: {confidence}")
-    if language != 'en':
-        new_lang = ""
-        if language == "ru":
-            new_lang = "rus"
-        else:
-            raise Exception(f"Unsupported language {language}. If you wish to use it, contact us in discord.")
-        print(f"Changing aligner config to {new_lang}")
-        aligner_config_string = aligner_config_string.replace("eng", new_lang)
-        print(f"Updated aligner config {aligner_config_string}")
-    
-    print('Aligning audio with lyrics...')
-    task = Task(config_string=aligner_config_string)
-    task.audio_file_path_absolute = vocal_audio_full_path
-    task.text_file_path_absolute = input_text_path
-    task.sync_map_file_path_absolute = sync_file_path
-    try:
-        ExecuteTask(task).execute()
-        task.output_sync_map_file()
-    except Exception as e:
-        print(f"Error during alignment: {e}")
-        return
-        
-    # Step 3: Video Generation
-    print('Building video...')
-    def get_audio_duration(audio_path):
+    def perform_vocal_separation(self):
+        input_audio_path = os.path.join(self.config.input_cache, self.config.audio_file_name)
+        audio_cache_path = self.audio_cache_path
+
+        os.makedirs(audio_cache_path, exist_ok=True)
+
+        if not input_audio_path.endswith('.wav'):
+            input_audio_path = self.convert_mp3_to_wav(input_audio_path, input_audio_path + '.wav')
+
+        outputs = self.vocal_separator.separate(input_audio_path)
+
+        instrumental_audio_file = outputs[0]
+        instrumental_audio_full_path = os.path.join(audio_cache_path, instrumental_audio_file)
+
+        vocal_audio_file = outputs[-1]
+        vocal_audio_full_path = os.path.join(audio_cache_path, vocal_audio_file)
+
+        return input_audio_path, vocal_audio_full_path, instrumental_audio_full_path
+
+class LyricsAligner:
+    def __init__(self, config):
+        self.config = config
+
+    def align_lyrics(self, vocal_audio_full_path):
+        input_text_path = os.path.join(self.config.input_cache, self.config.text_file_name)
+        sync_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}.srt")
+
+        logging.info("Detecting lyrics language...")
+        with open(input_text_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        language, confidence = langid.classify(text)
+        logging.info(f"Detected language {language} with confidence: {confidence}")
+
+        if language != 'en':
+            new_lang = "rus" if language == "ru" else ""
+            if not new_lang:
+                raise Exception(f"Unsupported language {language}. If you wish to use it, contact us in discord.")
+            logging.info(f"Changing aligner config to {new_lang}")
+            self.config.aligner_config_string = self.config.aligner_config_string.replace("eng", new_lang)
+            logging.info(f"Updated aligner config {self.config.aligner_config_string}")
+
+        logging.info('Aligning audio with lyrics...')
+        task = Task(config_string=self.config.aligner_config_string)
+        task.audio_file_path_absolute = vocal_audio_full_path
+        task.text_file_path_absolute = input_text_path
+        task.sync_map_file_path_absolute = sync_file_path
+
+        try:
+            ExecuteTask(task).execute()
+            task.output_sync_map_file()
+        except Exception as e:
+            logging.error(f"Error during alignment: {e}")
+            return None
+
+        return sync_file_path
+
+class VideoBuilder:
+    def __init__(self, config):
+        self.config = config
+        self.default_bacground_path = os.path.join(self.config.input_cache, 'default.jpg')
+
+    def get_audio_duration(self, audio_path):
         probe = ffmpeg.probe(audio_path)
         return float(probe['format']['duration'])
 
-    def get_video_frame_rate(video_path):
+    def get_video_frame_rate(self, video_path):
         try:
             probe = ffmpeg.probe(video_path)
             video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
             if video_stream:
-                # Try to get frame rate from different possible fields
                 if 'avg_frame_rate' in video_stream:
                     num, den = map(int, video_stream['avg_frame_rate'].split('/'))
-                    return num/den if den != 0 else 24
+                    return num / den if den != 0 else 24
                 elif 'r_frame_rate' in video_stream:
                     num, den = map(int, video_stream['r_frame_rate'].split('/'))
-                    return num/den if den != 0 else 24
-            return 24  # default frame rate
+                    return num / den if den != 0 else 24
+            return 24
         except Exception as e:
-            print(f"Warning: Could not determine frame rate, using default. Error: {e}")
-            return 24  # default frame rate for images or error cases
+            logging.warning(f"Warning: Could not determine frame rate, using default. Error: {e}")
+            return 24
 
-    frame_rate = get_video_frame_rate(background_path)
-    duration = get_audio_duration(input_audio_path)
+    def build_video(self, sync_file_path, input_audio_path):
+        output_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}_aligned.mp4")
+        background_path = os.path.join(self.config.input_cache, self.config.background_file_name) if self.config.background_file_name else self.default_bacground_path
 
-    try:
-        # Determine if input is image based on extension
-        is_image = background_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
+        frame_rate = self.get_video_frame_rate(background_path)
+        duration = self.get_audio_duration(input_audio_path)
+
+        try:
+            is_image = background_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
+
+            if is_image:
+                inv = ffmpeg.input(background_path, loop=1, t=duration, framerate=frame_rate)
+            else:
+                inv = ffmpeg.input(background_path, stream_loop=-1)
+                inv = ffmpeg.output(inv, "pipe:", format="mp4", an=None)
+                try:
+                    out, err = inv.run(capture_stdout=True, capture_stderr=True)
+                except ffmpeg.Error as e:
+                    logging.error(f"FFmpeg error: {e.stderr.decode()}")
+
+            ina = ffmpeg.input(input_audio_path)
+            out = ffmpeg.output(inv, ina, output_file_path,
+                vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path},drawtext=text='{self.config.overlay_text}':fontcolor=white:fontsize='w/20':x=5:y=5",
+                preset="fast",
+                pix_fmt="yuv420p",
+                acodec="aac",
+                strict="experimental",
+                shortest=None,
+                t=duration
+            )
+            out.run()
+            logging.info(f"Video created successfully: {output_file_path}")
+            return output_file_path
+        except Exception as e:
+            logging.error(f"Error occurred: {e}")
+            return None
+
+class LyricsVideoGenerator:
+    def __init__(self, config):
+        self.config = config
+        self.audio_processor = AudioProcessor(config)
+        self.lyrics_aligner = LyricsAligner(config)
+        self.video_builder = VideoBuilder(config)
+
+    def generate(self):
+        input_audio_path, vocal_audio_full_path, instrumental_audio_full_path = self.audio_processor.perform_vocal_separation()
+        if not vocal_audio_full_path:
+            logging.error("Vocal separation failed.")
+            return
+
+        sync_file_path = self.lyrics_aligner.align_lyrics(vocal_audio_full_path)
+        if not sync_file_path:
+            logging.error("Lyrics alignment failed.")
+            return
+        is_music_production = self.config.production_type == "music"
+        output_file_path = self.video_builder.build_video(sync_file_path, 
+            input_audio_path=input_audio_path if is_music_production else instrumental_audio_full_path
+        )
         
-        # Configure input based on whether it's an image or video
-        if is_image:
-            inv = ffmpeg.input(background_path, loop=1, t=duration, framerate=frame_rate)
+        result = {
+                'video_path': output_file_path,
+                'vocal_path': vocal_audio_full_path,
+                'instrumental_path': instrumental_audio_full_path,
+                'audio_path': input_audio_path,
+                'subtitles_path': sync_file_path
+            }
+        
+        if result:
+            logging.info(f"Result: {result}")
         else:
-            inv = ffmpeg.input(background_path, stream_loop=-1)  # -1 means infinite loop
-        
-        ina = ffmpeg.input(input_audio_path)
-        out = ffmpeg.output(ina, inv, output_file_path,
-                        vf=f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path},drawtext=text='{overlay_text}':fontcolor=white:fontsize='w/20':x=5:y=5",
-                        preset="fast",
-                        pix_fmt="yuv420p",
-                        acodec="aac",
-                        strict="experimental",
-                        shortest=None,
-                        t=duration
-                    )
-        out.run()
-        print(f"Video created successfully: {output_file_path}")
-        return {
-            'video_path': output_file_path,
-            'vocal_path': output_vocal_path,
-            'subtitles_path': sync_file_path
-        }
-    except ffmpeg.Error as e:
-        print(f"FFmpeg error occurred: {e.stderr.decode('utf8')}")
-        
-def main():
-    # Define file paths for demonstration purposes
-    import argparse
-    parser = argparse.ArgumentParser(description='Generating subtitles for music files and video with text oeverlay')
+            logging.error("Video generation failed.")
+        return result
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Generating subtitles for music files and video with text overlay')
     parser.add_argument("--audio", help="Path to input audio", default='Nine Thou (Grant Mohrman Superstars Remix).wav', type=str)
     parser.add_argument("--text", help="Path to lyrics", default='Nine Thou (Grant Mohrman Superstars Remix).txt', type=str)
-    parser.add_argument("--background", help="Path to background: video or image",
-        default='nfsmw.jpg', type=str)
-    
-    parser.add_argument("--vocal_separator_model", help="Path to vocal separator checkpoint", 
-        default="./checkpoints/vocal_separator/Kim_Vocal_2.onnx", type=str)
-    parser.add_argument("--inputs_cache", help="Path input cache folder", default='./inputs_cache/', type=str)
+    parser.add_argument("--background", help="Path to background: video or image", default=None, type=str)
+    parser.add_argument("--vocal_separator_model", help="Path to vocal separator checkpoint", default="./checkpoints/vocal_separator/Kim_Vocal_2.onnx", type=str)
+    parser.add_argument("--inputs_cache", help="Path input cache folder", default='./', type=str)
     parser.add_argument("--outputs_cache", help="Path output cache folder", default='./aligner_cache/', type=str)
     args = parser.parse_args()
 
-    audio_file_name = args.audio
-    text_file_name = args.text
-    background_file_name = args.background
-    vocal_separator_model = args.vocal_separator_model
-    inputs_cache_path = args.inputs_cache
-    outputs_cache_path = args.outputs_cache
-
-    align_lyrics(audio_file_name, text_file_name, vocal_separator_model, background_file_name=background_file_name,
-        output_cache=outputs_cache_path, input_cache=inputs_cache_path)
-    
-if __name__ == "__main__":
-    main()
+    config = Config(args)
+    generator = LyricsVideoGenerator(config)
+    generator.generate()
