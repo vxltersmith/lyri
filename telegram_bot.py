@@ -198,7 +198,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
     logger = logging.getLogger(__name__)
     config = context.bot_data["config"]
     logger.info(f"Creting {production_type} video...")
-    await update.effective_chat.send_message("Starting lyrics alignment process...")
+    await update.effective_chat.send_message("Doing magic now, please wait...")
     
     try:
         input_cache = config["paths"]["input_cache"]
@@ -273,7 +273,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         }
         if not production_type == 'separate_audio':
             data['text_file_name'] = lyrics_file['file_name']
-            data['background_file_name'] = background_file['file_name'],
+            data['background_file_name'] = background_file['file_name']
         config.from_user_data(data)
 
         result_paths = await asyncio.get_event_loop().run_in_executor(
