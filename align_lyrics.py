@@ -178,7 +178,7 @@ class VideoBuilder:
                 inv = ffmpeg.input(background_path, loop=1, t=duration, framerate=frame_rate)
             else:
                 # If background is a video, strip its audio first
-                stripped_video_path = os.path.join(self.config.output_cache, "background_no_audio.mp4")
+                stripped_video_path = background_path+"_background_no_audio.mp4"
                 background_path = self.strip_audio_from_video(background_path, stripped_video_path)
                 inv = ffmpeg.input(background_path, stream_loop=-1)
 
