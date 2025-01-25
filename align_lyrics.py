@@ -51,7 +51,7 @@ class AudioProcessor:
         vocal_separator.load_model(os.path.basename(self.config.vocal_separator_model))
         self.vocal_separator = vocal_separator
 
-    def convert_mp3_to_wav(self, input_mp3_path, output_wav_path):
+    def convert_audio(self, input_mp3_path, output_wav_path):
         if os.path.exists(output_wav_path):
             return output_wav_path
         try:
@@ -68,7 +68,7 @@ class AudioProcessor:
         os.makedirs(audio_cache_path, exist_ok=True)
 
         if not input_audio_path.endswith('.wav'):
-            input_audio_path = self.convert_mp3_to_wav(input_audio_path, input_audio_path + '.wav')
+            input_audio_path = self.convert_audio(input_audio_path, input_audio_path + '.wav')
 
         outputs = self.vocal_separator.separate(input_audio_path)
 
@@ -214,6 +214,11 @@ class LyricsVideoGenerator:
             logging.error("Vocal separation failed.")
             return
         if self.config.production_type == "separate_audio":
+            logging.info(f"Recoding audios...")
+            vocal_audio_full_path = self.audio_processor.convert_audio(vocal_audio_full_path, vocal_audio_full_path+'.mp3')
+            instrumental_audio_full_path = self.audio_processor.convert_audio(instrumental_audio_full_path, instrumental_audio_full_path+'.mp3')
+            input_audio_path = self.audio_processor.convert_audio(input_audio_path, input_audio_path+'.mp3')
+            
             result = {
                 'vocal_path': vocal_audio_full_path,
                 'instrumental_path': instrumental_audio_full_path,
