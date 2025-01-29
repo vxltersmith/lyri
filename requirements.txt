@@ -2,7 +2,7 @@ speechbrain
 audio-separator==0.24.1
 onnxruntime-gpu
 ffmpeg-python
-nNpyenchant
+pyenchant
 langid
 python-telegram-bot
 pyyaml
