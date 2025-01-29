@@ -13,3 +13,5 @@ aiofiles
 aiohttp
 aiogram
 pysub-parser
+whisperx
+grpcio==1.68.1
