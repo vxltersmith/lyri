@@ -405,8 +405,9 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         ready_text += "(Or you can send me an image for background)"
     await update.effective_chat.send_message(ready_text)
     inline_keyboard = [
-        [InlineKeyboardButton("Music video", callback_data='music_align')],
-        [InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')]
+        [InlineKeyboardButton("Music video", callback_data='music_align'),
+        InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')],
+        [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
     ]
     markup = InlineKeyboardMarkup(inline_keyboard)
     await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
