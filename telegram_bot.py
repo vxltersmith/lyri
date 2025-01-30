@@ -9,7 +9,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram import Bot
 
-from align_lyrics import Config, LyricsVideoGenerator
+from lyri_core import Config, LyricsVideoGenerator
 import asyncio
 from yt_dlp import YoutubeDL
 import re
@@ -269,7 +269,9 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
             'audio_file_name': source_file['file_name'],
             'input_cache': input_cache,
             'output_cache': output_cache,
-            'production_type': production_type   
+            'production_type': production_type,
+            'aspect_ratio': context.user_data.get('aspect_ratio', 'vertical'),
+            'video_resolution': context.user_data.get('video_resolution', (1920, 1080))
         }
         if not production_type == 'separate_audio':
             data['text_file_name'] = lyrics_file['file_name']
@@ -349,6 +351,18 @@ def is_context_full(user_data: dict) -> bool:
     has_lyrics = 'lyrics_file' in user_data
     return has_lyrics and (has_video != has_audio)  # XOR: one of video or audio, not both
 
+def setup_core_logic(context):
+    bot_config = context.bot_data['config']
+    if bot_config.get('aligner_generator'): return
+     
+    config = Config(input_cache=bot_config['paths']['input_cache'], 
+        output_cache=bot_config['paths']['output_cache'], 
+        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
+    generator = LyricsVideoGenerator(config)
+    context.bot_data['aligner_config'] = config
+    context.bot_data['aligner_generator'] = generator
+    return
+
 async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = context.user_data
 
@@ -378,7 +392,9 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if has_audio or has_video:
             inline_keyboard.append(
-                [InlineKeyboardButton("Separate audio / Разделить на дорожки", callback_data='separate_audio')]
+                [InlineKeyboardButton("Separate audio / Разделить на дорожки", callback_data='separate_audio')])
+            inline_keyboard.append(
+                [InlineKeyboardButton("Automatic subtitles(premium)", callback_data='auto_subs')]
             )
         
         if not has_lyrics and (has_audio and not user_data['audio_file'].get("is_youtube", False) and user_data['audio_file']['title'] and user_data['audio_file']['performer']):
@@ -391,26 +407,33 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_chat.send_message(output_message, reply_markup=markup)
         return
 
-    bot_config = context.bot_data['config']
-    config = Config(input_cache=bot_config['paths']['input_cache'], 
-        output_cache=bot_config['paths']['output_cache'], 
-        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
-    generator = LyricsVideoGenerator(config)
-    context.bot_data['aligner_config'] = config
-    context.bot_data['aligner_generator'] = generator
+    await update.effective_chat.send_message("Good! Now I'm settin up my core logic...")
+    setup_core_logic(context)
+    
+    # Ask for video orientation
+    if 'aspect_ratio' not in user_data:
+        await update.effective_chat.send_message("Wonderful, we're ready, please choose video format")
+        inline_keyboard = [
+            [InlineKeyboardButton("Vertical Video", callback_data='vertical_video'),
+             InlineKeyboardButton("Horizontal Video", callback_data='horizontal_video')],
+            [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.effective_chat.send_message("Choose the video orientation:", reply_markup=markup)
+    else:
+        # If context is valid
+        ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
+        if 'background_file' not in user_data:
+            ready_text += "(Or you can send me an image for background)"
+        await update.effective_chat.send_message(ready_text)
+        inline_keyboard = [
+            [InlineKeyboardButton("Music video", callback_data='music_align'),
+             InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')],
+            [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
 
-    # If context is valid
-    ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
-    if 'background_file' not in user_data:
-        ready_text += "(Or you can send me an image for background)"
-    await update.effective_chat.send_message(ready_text)
-    inline_keyboard = [
-        [InlineKeyboardButton("Music video", callback_data='music_align'),
-        InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')],
-        [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
-    ]
-    markup = InlineKeyboardMarkup(inline_keyboard)
-    await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
 
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -516,15 +539,27 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == 'karaoke_align':
         await query.edit_message_text("You selected: Karaoke video 🎤. Processing will begin soon!")
         await align(update, context, 'karaoke')
+    elif query.data == 'auto_subs':
+        context.user_data['lyrics_file'] = {
+            'text_content': 'auto',
+            'file_name': 'lyrics.txt',
+            'is_text_message': True
+        }
+        await query.edit_message_text("You selected: Automatic subtitles, this is a heavy feature, please be patient")
+        await try_start_processing(update, context)
+    elif query.data == 'horizontal_video':
+        context.user_data['aspect_ratio'] = 'horizontal'
+        context.user_data['video_resolution'] = (1920, 1080)
+        await query.edit_message_text("You selected: Horizontal Video")
+        await try_start_processing(update, context)
+    elif query.data == 'vertical_video':
+        context.user_data['aspect_ratio'] = 'vertical'
+        context.user_data['video_resolution'] =  (1080,1920)
+        await query.edit_message_text("You selected: Vertical Video")
+        await try_start_processing(update, context)
     elif query.data == 'separate_audio':
         await query.edit_message_text("You selected: Separate audio 🎤. Processing will begin soon!")
-        bot_config = context.bot_data['config']
-        config = Config(input_cache=bot_config['paths']['input_cache'], 
-        output_cache=bot_config['paths']['output_cache'], 
-        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
-        generator = LyricsVideoGenerator(config)
-        context.bot_data['aligner_config'] = config
-        context.bot_data['aligner_generator'] = generator
+        setup_core_logic(context)
         await align(update, context, 'separate_audio')
     elif query.data == 'cancel':
         await query.edit_message_text("Processing cancelled. You can start a new session now. 😊")
