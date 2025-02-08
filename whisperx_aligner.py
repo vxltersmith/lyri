@@ -48,6 +48,7 @@ class LyricsAlignerWithWhisper:
         result = whisperx.align(result["segments"], model_a, metadata, 
             vocal_audio_full_path, self.device, return_char_alignments=False)
         raw_subs = result['word_segments']
+        
         if self.config.production_type == 'music':
             self.music_subtitles_generator.convert(raw_subs, sync_file_path)
         else:

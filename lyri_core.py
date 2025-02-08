@@ -235,9 +235,6 @@ class LyricsVideoGenerator:
         
         result = {
                 'video_path': output_file_path,
-                'vocal_path': vocal_audio_full_path,
-                'instrumental_path': instrumental_audio_full_path,
-                'audio_path': input_audio_path,
                 'subtitles_path': sync_file_path
             }
         
