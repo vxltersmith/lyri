@@ -95,6 +95,10 @@ import os
 import ffmpeg
 import logging
 
+import ffmpeg
+import os
+import logging
+
 class VideoBuilder:
     def __init__(self, config):
         self.config = config
@@ -133,7 +137,7 @@ class VideoBuilder:
             return None
 
     def build_video(self, sync_file_path, input_audio_path):
-        """Build the final video."""
+        """Build the final video with the desired size and embed the original video inside it."""
         output_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}_aligned.mp4")
         background_path = (
             os.path.join(self.config.input_cache, self.config.background_file_name)
@@ -144,36 +148,50 @@ class VideoBuilder:
         duration = self.get_audio_duration(input_audio_path)
 
         try:
-            # Check if the background is an image or video
-            is_image = background_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
+            width, height = self.config.video_resolution  # Desired final size
+            aspect_ratio = self.config.aspect_ratio  # 'vertical' or 'horizontal'
 
             # Process background input
+            is_image = background_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
             if is_image:
                 inv = ffmpeg.input(background_path, loop=1, t=duration, framerate=frame_rate)
             else:
-                # If background is a video, strip its audio first
-                stripped_video_path = background_path+"_background_no_audio.mp4"
+                stripped_video_path = background_path + "_background_no_audio.mp4"
                 background_path = self.strip_audio_from_video(background_path, stripped_video_path)
                 inv = ffmpeg.input(background_path, stream_loop=-1)
 
-            # Combine background and audio
+            # Input audio
             ina = ffmpeg.input(input_audio_path)
+
+            # Scale & pad video to fit inside the final resolution
+            scale_filter = f"scale='if(gt(iw/ih,{width}/{height}),{width},-2)':'if(gt(iw/ih,{width}/{height}),-2,{height})'"
+            pad_filter = f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+            vf_filters = f"{scale_filter},{pad_filter}"
+
+            # Add subtitles and overlay text
+            if sync_file_path:
+                vf_filters += f",subtitles={sync_file_path}"
+            if self.config.overlay_text:
+                vf_filters += f",drawtext=text='{self.config.overlay_text}':x=5:y=5:fontcolor=white:fontsize='sqrt(w*h)*0.05'"
+
+            # Combine video and audio
             out = ffmpeg.output(
                 inv, ina, output_file_path,
-                vf = f"scale=ceil(iw/2)*2:ceil(ih/2)*2,subtitles={sync_file_path}:force_style='FontSize=50',drawtext=text='{self.config.overlay_text}:x=5:y=5':fontcolor=white:fontsize='sqrt(w*h)*0.05'",
+                vf=vf_filters,
                 preset="fast",
                 pix_fmt="yuv420p",
                 acodec="aac",
                 strict="experimental",
                 shortest=None,
                 t=duration
-            )
+            ).overwrite_output()
             out.run()
             logging.info(f"Video created successfully: {output_file_path}")
             return output_file_path
         except Exception as e:
             logging.error(f"Error occurred during video creation: {e}")
             return None
+
 
 class LyricsVideoGenerator:
     def __init__(self, config):
@@ -217,9 +235,6 @@ class LyricsVideoGenerator:
         
         result = {
                 'video_path': output_file_path,
-                'vocal_path': vocal_audio_full_path,
-                'instrumental_path': instrumental_audio_full_path,
-                'audio_path': input_audio_path,
                 'subtitles_path': sync_file_path
             }
         

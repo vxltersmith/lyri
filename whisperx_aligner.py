@@ -2,12 +2,14 @@ import os
 import logging
 import whisperx
 from config import Config
+from subtitles_engine import AdvancedSRTtoASSConverter
 
 class LyricsAlignerWithWhisper:
     def __init__(self, config):
         self.config = config
         self.device = "cuda" if config.gpu_on else "cpu"
         self.model = whisperx.load_model("large-v2", device=self.device)
+        self.music_subtitles_generator = AdvancedSRTtoASSConverter(config)
         
     def format_time(self, time_in_seconds):
         # Convert seconds to hours, minutes, seconds, and milliseconds
@@ -45,8 +47,12 @@ class LyricsAlignerWithWhisper:
         model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=self.device)
         result = whisperx.align(result["segments"], model_a, metadata, 
             vocal_audio_full_path, self.device, return_char_alignments=False)
+        raw_subs = result['word_segments']
         
-        self.save_lyrics(result['word_segments'], sync_file_path)
+        if self.config.production_type == 'music':
+            self.music_subtitles_generator.convert(raw_subs, sync_file_path)
+        else:
+            self.save_lyrics(raw_subs, sync_file_path)
         print(f"Transcription saved to {sync_file_path}")
         return sync_file_path
 

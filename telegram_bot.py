@@ -2,24 +2,21 @@ import logging
 import yaml
 import os
 import base64
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram import Bot
+from aiogram import Bot as aioBot
 
-from align_lyrics import Config, LyricsVideoGenerator
+from lyri_core import Config, LyricsVideoGenerator
 import asyncio
 from yt_dlp import YoutubeDL
 import re
 import uuid
-
-
 import os
 import aiohttp
 import aiofiles
-
 import subprocess
 import time
 
@@ -39,24 +36,36 @@ def start_local_server(api_id, api_hash):
         print(f"Failed to start local server: {e}")
 
 
-async def download_file_in_chunks(context, file_id, file_path, chunk_size=1024 * 1024):
-    file = await context.bot.get_file(file_id)
-    file_url = file.file_path
-    
-    try:
+import os
+import aiohttp
+import aiofiles
+import shutil
+
+async def download_file(context, file_id, file_path):
+    aiobot = context.bot_data['config']['bot'].get('aiobot')
+    if not aiobot:
+        print('Using default tg-api to get file')
+        file = await context.bot.get_file(file_id)
         await file.download_to_drive(file_path)
-    except Exception as e:
-        print("Failed to download file with main API, fall back on web download")
+        return
+
+    print('Using local bot API-server to get file')
+    await aiobot.download(file_id, file_path, timeout=30)
+    if os.path.exists(file_path):
+        print('File downloaded successfully')
+        return file_path
+    else:
+        token = context.bot_data['config']['bot']['token']
+        file_url = aiobot.session.api.file_url(token, file_id)
+        print('fallback for large file downloading')
+        # Download file using aiohttp with increased timeout
         async with aiohttp.ClientSession() as session:
-            async with session.get(file_url) as response:
+            async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=300)) as response:
+                if response.status != 200:
+                    raise Exception(f"Failed to download file: {response.status}")
                 async with aiofiles.open(file_path, 'wb') as f:
-                    while True:
-                        chunk = await response.content.read(chunk_size)
-                        if not chunk:
-                            break
+                    async for chunk in response.content.iter_chunked(1024 * 1024):  # 1MB chunks
                         await f.write(chunk)
-    except Exception as e:
-        print(f"Failed to download file: {e}")
 
 def is_youtube_url(url):
     youtube_regex = (
@@ -213,27 +222,17 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
 
         if audio_file:
             base_filename = os.path.splitext(audio_file['file_name'])[0]
-            audio_path = os.path.join(input_cache, audio_file['file_name'])
-            if audio_file.get('is_youtube'):
-                audio_path = audio_file['file_path']
-            else:
-                file = await context.bot.get_file(audio_file['file_id'])
-                await file.download_to_drive(audio_path)
             source_file = audio_file
         elif video_file:
-            base_filename = os.path.splitext(video_file['file_name'])[0]
-            video_path = os.path.join(input_cache, video_file['file_name'])
-            try:
-                await download_file_in_chunks(context, video_file['file_id'], video_path)
-            except:
-                await update.effective_chat.send_message(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
             source_file = video_file
-                
+        
+        base_filename = os.path.splitext(os.path.basename(source_file['file_name']))[0]
+        
         lyrics_file = context.user_data.get('lyrics_file')
         if lyrics_file:
             lyrics_filename = f"{base_filename}.txt"
             lyrics_file['file_name'] = lyrics_filename
-            lyrics_path = await save_lyrics_file(context, lyrics_file, input_cache, base_filename)
+            await save_lyrics_file(context, lyrics_file, input_cache, base_filename)
         
         background_file = context.user_data.get('background_file')
         background_path = None
@@ -246,7 +245,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
         elif background_file and background_file.get('is_video_file'):
             video_path = os.path.join(input_cache, background_file['file_name'])
             try:
-                await download_file_in_chunks(context, background_file['file_id'], video_path)
+                await download_file(context, background_file['file_id'], video_path)
             except:
                 await update.effective_chat.send_message(f"An error occurred: {str(e)} \n Currently Telegram does not support downloading files larger than 20Mb in bot API. Please try with a smaller file.")
         else:
@@ -269,10 +268,12 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
             'audio_file_name': source_file['file_name'],
             'input_cache': input_cache,
             'output_cache': output_cache,
-            'production_type': production_type   
+            'production_type': production_type,
+            'aspect_ratio': context.user_data.get('aspect_ratio', 'vertical'),
+            'video_resolution': context.user_data.get('video_resolution', (1920, 1080))
         }
         if not production_type == 'separate_audio':
-            data['text_file_name'] = lyrics_file['file_name']
+            data['text_file_name'] = lyrics_file['file_name'] if lyrics_file else None
             data['background_file_name'] = background_file['file_name']
         config.from_user_data(data)
 
@@ -324,7 +325,7 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
                     caption="Here's the instrumental audio track"
                 )
             
-        if input_audio_path and source_file.get('is_youtube') or video_file:    
+        if input_audio_path and (source_file.get('is_youtube') or video_file):    
             # Send the original audio file
             await update.effective_chat.send_message("Sending original audio file...")
             with open(input_audio_path, 'rb') as audio:
@@ -348,6 +349,18 @@ def is_context_full(user_data: dict) -> bool:
     has_audio = 'audio_file' in user_data
     has_lyrics = 'lyrics_file' in user_data
     return has_lyrics and (has_video != has_audio)  # XOR: one of video or audio, not both
+
+def setup_core_logic(context):
+    bot_config = context.bot_data['config']
+    if context.bot_data.get('aligner_generator'): return
+     
+    config = Config(input_cache=bot_config['paths']['input_cache'], 
+        output_cache=bot_config['paths']['output_cache'], 
+        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
+    generator = LyricsVideoGenerator(config)
+    context.bot_data['aligner_config'] = config
+    context.bot_data['aligner_generator'] = generator
+    return
 
 async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = context.user_data
@@ -378,7 +391,9 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if has_audio or has_video:
             inline_keyboard.append(
-                [InlineKeyboardButton("Separate audio / Разделить на дорожки", callback_data='separate_audio')]
+                [InlineKeyboardButton("Separate audio / Разделить на дорожки", callback_data='separate_audio')])
+            inline_keyboard.append(
+                [InlineKeyboardButton("Automatic subtitles(premium)", callback_data='auto_subs')]
             )
         
         if not has_lyrics and (has_audio and not user_data['audio_file'].get("is_youtube", False) and user_data['audio_file']['title'] and user_data['audio_file']['performer']):
@@ -391,55 +406,79 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_chat.send_message(output_message, reply_markup=markup)
         return
 
-    bot_config = context.bot_data['config']
-    config = Config(input_cache=bot_config['paths']['input_cache'], 
-        output_cache=bot_config['paths']['output_cache'], 
-        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
-    generator = LyricsVideoGenerator(config)
-    context.bot_data['aligner_config'] = config
-    context.bot_data['aligner_generator'] = generator
-
-    # If context is valid
-    ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
-    if 'background_file' not in user_data:
-        ready_text += "(Or you can send me an image for background)"
-    await update.effective_chat.send_message(ready_text)
-    inline_keyboard = [
-        [InlineKeyboardButton("Music video", callback_data='music_align'),
-        InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')],
-        [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
-    ]
-    markup = InlineKeyboardMarkup(inline_keyboard)
-    await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
-
+    await update.effective_chat.send_message("Good! Now I'm settin up my core logic...")
+    setup_core_logic(context)
+    
+    # Ask for video orientation
+    if 'aspect_ratio' not in user_data:
+        await update.effective_chat.send_message("Wonderful, we're ready, please choose video format")
+        inline_keyboard = [
+            [InlineKeyboardButton("Vertical Video", callback_data='vertical_video'),
+             InlineKeyboardButton("Horizontal Video", callback_data='horizontal_video')],
+            [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.effective_chat.send_message("Choose the video orientation:", reply_markup=markup)
+    else:
+        # If context is valid
+        ready_text = "Great! Everything is ready. What would you like to create? 🎬 \n"
+        if 'background_file' not in user_data:
+            ready_text += "(Or you can send me an image for background)"
+        await update.effective_chat.send_message(ready_text)
+        inline_keyboard = [
+            [InlineKeyboardButton("Music video", callback_data='music_align'),
+             InlineKeyboardButton("Karaoke video", callback_data='karaoke_align')],
+            [InlineKeyboardButton("Drop context / Начать сначала", callback_data='drop_context')]
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.effective_chat.send_message("Choose an option below to get started:", reply_markup=markup)
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    audio = update.message.audio or update.message.voice
-    if audio:
-        orignal_file_name = getattr(audio, 'file_name', 'audio.wav')
-        extension = os.path.splitext(orignal_file_name)[-1]
-        file_name = f'audio_{uuid.uuid4()}{extension}'
-        context.user_data['audio_file'] = {
-            'file_id': audio.file_id,
-            'file_name': file_name,
-            'is_audio_file': True,
-            'title': audio.title if hasattr(audio, 'title') else None,
-            'performer': audio.performer if hasattr(audio, 'performer') else None
-        }
-        await update.message.reply_text("Audio file received! Keep going!")
-        await try_start_processing(update, context)
+    audio = update.message.audio or update.message.voice or update.message.document 
+    audio_type = audio.mime_type.startswith('audio/')
+    if not audio_type:
+        await update.message.reply_text("Sorry but I don't think this is audio, please try another file")
+        return
+    
+    orignal_file_name = getattr(audio, 'file_name', 'audio.wav')
+    extension = os.path.splitext(orignal_file_name)[-1]
+    
+    input_cache = context.bot_data['config']["paths"]["input_cache"]
+    audio_file_name = f'audio_{uuid.uuid4()}{extension}'
+    save_path = os.path.join(input_cache, audio_file_name)
+    context.user_data['audio_file'] = {
+        'file_id': audio.file_id,
+        'file_name': audio_file_name,
+        'is_audio_file': True,
+        'title': audio.title if hasattr(audio, 'title') else None,
+        'performer': audio.performer if hasattr(audio, 'performer') else None
+    }
+    await update.message.reply_text("Audio file received! Downloading file aboard...")
+    
+    await download_file(context, audio.file_id, save_path)
+    
+    await try_start_processing(update, context)
         
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     video = update.message.video
-    if video:
-        key = 'background_file' if context.user_data.get('audio_file') else 'video_file'
-        context.user_data[key] = {
-            'file_id': video.file_id,
-            'file_name': f'video_{uuid.uuid4()}.mp4',
-            'is_video_file': True
-        }
-        await update.message.reply_text("Video file received!")
-        await try_start_processing(update, context)
+    if not video:
+        await update.message.reply_text("Sorry but I don't think this is audio, please try another file")
+        return
+        
+    key = 'background_file' if context.user_data.get('audio_file') else 'video_file'
+    input_cache = context.bot_data['config']["paths"]["input_cache"]
+    video_file_name = f'video_{uuid.uuid4()}.mp4'
+    save_path = os.path.join(input_cache, video_file_name)
+    context.user_data[key] = {
+        'file_id': video.file_id,
+        'file_name': video_file_name,
+        'is_video_file': True
+    }
+    await update.message.reply_text("Video file received! Downloading file aboard...")
+    
+    await download_file(context, video.file_id, save_path)
+    
+    await try_start_processing(update, context)
 
 def load_settings(config_path="./configs/bot.yaml"):
     with open(config_path, "r") as file:
@@ -516,15 +555,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == 'karaoke_align':
         await query.edit_message_text("You selected: Karaoke video 🎤. Processing will begin soon!")
         await align(update, context, 'karaoke')
+    elif query.data == 'auto_subs':
+        context.user_data['lyrics_file'] = None
+        await query.edit_message_text("You selected: Automatic subtitles, this is a heavy feature, please be patient")
+        await try_start_processing(update, context)
+    elif query.data == 'horizontal_video':
+        context.user_data['aspect_ratio'] = 'horizontal'
+        context.user_data['video_resolution'] = (1920, 1080)
+        await query.edit_message_text("You selected: Horizontal Video")
+        await try_start_processing(update, context)
+    elif query.data == 'vertical_video':
+        context.user_data['aspect_ratio'] = 'vertical'
+        context.user_data['video_resolution'] =  (1080,1920)
+        await query.edit_message_text("You selected: Vertical Video")
+        await try_start_processing(update, context)
     elif query.data == 'separate_audio':
         await query.edit_message_text("You selected: Separate audio 🎤. Processing will begin soon!")
-        bot_config = context.bot_data['config']
-        config = Config(input_cache=bot_config['paths']['input_cache'], 
-        output_cache=bot_config['paths']['output_cache'], 
-        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
-        generator = LyricsVideoGenerator(config)
-        context.bot_data['aligner_config'] = config
-        context.bot_data['aligner_generator'] = generator
+        setup_core_logic(context)
         await align(update, context, 'separate_audio')
     elif query.data == 'cancel':
         await query.edit_message_text("Processing cancelled. You can start a new session now. 😊")
@@ -587,7 +634,8 @@ def main():
         start_local_server(app_id, app_hash)
         # Configure the bot to use the local server
         session = AiohttpSession(api=TelegramAPIServer.from_base("http://localhost:8081", is_local=True))
-        bot = Bot(token=bot_token, session=session)
+        aiobot = aioBot(token=bot_token, session=session)
+        settings['bot']['aiobot'] = aiobot
     
     app = ApplicationBuilder()
     app = app.token(bot_token).build()
@@ -597,7 +645,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
-    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
+    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE | filters.Document.AUDIO, handle_audio))
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE | filters.Sticker.ALL, handle_background_image))
     # YouTube handler should come before the general text handler

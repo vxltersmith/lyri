@@ -10,6 +10,8 @@ class Config:
         self.overlay_text = "by Lyri.ai"
         self.production_type = 'music'
         self.gpu_on = True
+        self.aspect_ratio = 'horizontal'
+        self.video_resolution = (1920, 1080)
     
     def from_user_data(self, user_data: dict):
         self.audio_file_name = user_data.get('audio_file_name')
@@ -18,6 +20,8 @@ class Config:
         self.input_cache = user_data.get('input_cache', self.input_cache)
         self.output_cache = user_data.get('output_cache', self.output_cache)
         self.production_type = user_data.get('production_type', 'music')
+        self.aspect_ratio = user_data.get('aspect_ratio', self.aspect_ratio)
+        self.video_resolution = user_data.get('video_resolution', self.video_resolution)
         
     def from_args(self, args):
         self.audio_file_name = args.audio
