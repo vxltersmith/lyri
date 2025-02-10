@@ -3,6 +3,47 @@ import logging
 import whisperx
 from config import Config
 from subtitles_engine import AdvancedSRTtoASSConverter
+import langid
+from aeneas.executetask import ExecuteTask
+from aeneas.task import Task
+
+
+class LyricsAligner:
+    def __init__(self, config):
+        self.config = config
+
+    def align_lyrics(self, vocal_audio_full_path):
+        input_text_path = os.path.join(self.config.input_cache, self.config.text_file_name)
+        sync_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}.srt")
+
+        logging.info("Detecting lyrics language...")
+        with open(input_text_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        language, confidence = langid.classify(text)
+        logging.info(f"Detected language {language} with confidence: {confidence}")
+
+        if language != 'en':
+            new_lang = "rus" if language == "ru" else ""
+            if not new_lang:
+                raise Exception(f"Unsupported language {language}. If you wish to use it, contact us in discord.")
+            logging.info(f"Changing aligner config to {new_lang}")
+            self.config.aligner_config_string = self.config.aligner_config_string.replace("eng", new_lang)
+            logging.info(f"Updated aligner config {self.config.aligner_config_string}")
+
+        logging.info('Aligning audio with lyrics...')
+        task = Task(config_string=self.config.aligner_config_string)
+        task.audio_file_path_absolute = vocal_audio_full_path
+        task.text_file_path_absolute = input_text_path
+        task.sync_map_file_path_absolute = sync_file_path
+
+        try:
+            ExecuteTask(task).execute()
+            task.output_sync_map_file()
+        except Exception as e:
+            logging.error(f"Error during alignment: {e}")
+            return None
+
+        return sync_file_path
 
 class LyricsAlignerWithWhisper:
     def __init__(self, config):
@@ -38,8 +79,8 @@ class LyricsAlignerWithWhisper:
                 srt_file.write(f"{start_time_str} --> {end_time_str}\n")
                 srt_file.write(f"{text}\n\n")
 
-    def align_lyrics(self, vocal_audio_full_path):
-        sync_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}.srt")
+    def align_lyrics(self, vocal_audio_full_path, task_config: Config):
+        sync_file_path = os.path.join(self.config.output_cache, f"{task_config.audio_file_name}.srt")
 
         logging.info('Transcribing audio with WhisperX...')
         result = self.model.transcribe(vocal_audio_full_path, chunk_size=30)
@@ -50,7 +91,7 @@ class LyricsAlignerWithWhisper:
         raw_subs = result['word_segments']
         
         if self.config.production_type == 'music':
-            self.music_subtitles_generator.convert(raw_subs, sync_file_path)
+            self.music_subtitles_generator.convert(raw_subs, sync_file_path, task_config)
         else:
             self.save_lyrics(raw_subs, sync_file_path)
         print(f"Transcription saved to {sync_file_path}")

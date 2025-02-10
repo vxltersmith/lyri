@@ -27,9 +27,10 @@ class AdvancedSRTtoASSConverter:
     """
 
 
-    def convert(self, subs, ass_file_name):
+    def convert(self, subs, ass_file_name, task_config: Config):
         """Converts an SRT file with word-level timestamps to an animated ASS subtitle file."""
-        frame_width, frame_height = self.config.video_resolution
+        frame_width, frame_height = task_config.video_resolution
+        frame_width, frame_height = (int(frame_width), int(frame_height))
         
         subs = self._group_fast_words(subs)
         

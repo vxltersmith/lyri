@@ -12,6 +12,8 @@ class Config:
         self.gpu_on = True
         self.aspect_ratio = 'horizontal'
         self.video_resolution = (1920, 1080)
+        self.use_whisper = True
+        self.default_background_path = "./default.jpg"
     
     def from_user_data(self, user_data: dict):
         self.audio_file_name = user_data.get('audio_file_name')

@@ -212,7 +212,6 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
     try:
         input_cache = config["paths"]["input_cache"]
         output_cache = config["paths"]["output_cache"]
-
         os.makedirs(input_cache, exist_ok=True)
         os.makedirs(output_cache, exist_ok=True)
 
@@ -642,6 +641,11 @@ def main():
 
     app.bot_data["welcome_message"] = settings["bot"]["welcome_message"]
     app.bot_data["config"] = settings
+    
+    input_cache = settings["paths"]["input_cache"]
+    output_cache = settings["paths"]["output_cache"]
+    os.makedirs(input_cache, exist_ok=True)
+    os.makedirs(output_cache, exist_ok=True)
 
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
