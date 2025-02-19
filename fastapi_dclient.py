@@ -6,14 +6,16 @@ import asyncio
 import logging
 
 class VideoAlignerClient:
-    def __init__(self, api_url="http://127.0.0.1:8000"):
+    def __init__(self, api_url="http://127.0.0.1:8000", input_chache = './', output_cache_path = './'):
         self.api_url = api_url
         self.logger = logging.getLogger(__name__)
+        self.output_cache_path = output_cache_path
+        self.input_chache = input_chache
 
     def upload_files(self, file_paths, keys):
         """Uploads multiple files to the FastAPI server."""
         url = f"{self.api_url}/upload/"
-        files = [('files', (os.path.basename(file_path), open(file_path, 'rb'))) for file_path in file_paths]
+        files = [('files', (os.path.basename(file_path), open(os.path.join(self.input_chache, file_path), 'rb'))) for file_path in file_paths]
         data = {'keys': keys}
         response = requests.post(url, files=files, data=data)
         return response.json()
@@ -53,15 +55,18 @@ class VideoAlignerClient:
         """Downloads all available artifacts for a task."""
         url = f"{self.api_url}/download_all/{task_id}"
         response = requests.post(url)
+        results = {}
         if response.status_code == 200:
             files = response.json()
             for file in files:
                 file_type = file["file_type"]
                 file_path = file["file_path"]
                 filename = os.path.basename(file_path)
-                output_path = f"output_{filename}"
+                output_path = os.path.join(self.output_cache_path, filename)
                 download_message = self.download_file(task_id, file_type, output_path)
                 print(download_message)
+                results[file_type] = output_path
+            return results
         else:
             print("Failed to download all files:", response.json())
 
@@ -71,10 +76,13 @@ class VideoAlignerClient:
         response = requests.delete(url)
         return response.json()
 
-    async def align(self, audio_file_path, meta_data, background_file_path):
-
-        file_paths = [audio_file_path, background_file_path]
-        keys = ["audio", "background"]
+    async def align(self, audio_file_path, meta_data, background_file_path=None):
+        print("Starting alignment...")
+        file_paths = [audio_file_path]
+        keys = ["audio"]
+        if background_file_path is not None:
+            file_paths.append(background_file_path)
+            keys.append("background")
 
         self.logger.info("Uploading files...")
         upload_response = self.upload_files(file_paths, keys)
@@ -109,14 +117,22 @@ class VideoAlignerClient:
 
             await asyncio.sleep(5)  # Wait before checking again
 
+        completed = False
         if status_response["status"] == "Completed":
             self.logger.info("Downloading all processed files...")
-            self.download_all(task_id)
+            results = self.download_all(task_id)
+            completed = True
 
         # Clean up by deleting the task
         self.logger.info("Deleting task...")
         delete_response = self.delete_task(task_id)
         self.logger.info("Response: %s", delete_response)
+        
+        if completed:
+            return results
+        else:
+            return None  
+        
 
 # Example usage
 if __name__ == "__main__":
@@ -124,14 +140,13 @@ if __name__ == "__main__":
 
     client = VideoAlignerClient()
 
-    audio_file_path = "./data/inputs_cache/video_f8967262-d249-4de4-b6fe-cf7b80a2753f.mp4.wav"
-    metaconfig_file_path = "./data/inputs_cache/sample.json"
-    background_file_path = "./data/inputs_cache/video_f8967262-d249-4de4-b6fe-cf7b80a2753f.mp4"
+    audio_file_path = "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
+    background_file_path = "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
     production_type = "music"
     meta_data = {
         'production_type': production_type,
         'aspect_ratio': 'vertical',
-        'video_resolution': (1920, 1080)
+        'video_resolution': (1080, 1920)
     }
 
     asyncio.run(client.align(audio_file_path, meta_data, background_file_path))

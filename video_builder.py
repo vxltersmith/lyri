@@ -46,15 +46,16 @@ class VideoBuilder:
         output_file_path = os.path.join(self.config.output_cache, f"{task_config.audio_file_name}_aligned.mp4")
         background_path = (
             os.path.join(self.config.input_cache, task_config.background_file_name)
-            if self.config.background_file_name else self.default_background_path
+            if task_config.background_file_name else self.default_background_path
         )
 
         frame_rate = self.get_video_frame_rate(background_path)
         duration = self.get_audio_duration(input_audio_path)
 
         try:
-            width, height = self.config.video_resolution  # Desired final size
-            aspect_ratio = self.config.aspect_ratio  # 'vertical' or 'horizontal'
+            width, height = task_config.video_resolution  # Desired final size
+            print(f"Building video with resolution: {width}x{height}")
+            aspect_ratio = task_config.aspect_ratio  # 'vertical' or 'horizontal'
 
             # Process background input (image or video)
             inv = self.prepare_background(background_path, frame_rate, duration)
