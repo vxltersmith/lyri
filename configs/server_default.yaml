@@ -1,0 +1,11 @@
+paths:
+  input_cache: "./server_data/inputs_cache/"
+  output_cache: "./server_data/aligner_cache/"
+
+aligner:
+  aligner_model_path: "./checkpoints/vocal_separator/Kim_Vocal_2.onnx"  # Path to aligner model
+  default_background_image: "/app/synclyr/default.jpg"  # Add this line
+
+log:
+  level: "INFO"  # Can be DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "./logs/bot.log"  # Path to log file

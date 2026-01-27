@@ -12,3 +12,7 @@ data/*
 configs/debug_bot.yaml
 configs/prod_bot.yaml
 1469255058:AAEB8ZdMIcFLKlDdMwHtzW2aIa_sTmnA7zE/*
+**.wav
+**.mp4
+**.srt
+server_data/*

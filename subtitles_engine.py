@@ -1,5 +1,6 @@
 import os
 from config import Config
+import re
 
 class AdvancedSRTtoASSConverter:
     def __init__(self, config: Config):
@@ -26,13 +27,14 @@ class AdvancedSRTtoASSConverter:
     Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     """
 
-
-    def convert(self, subs, ass_file_name):
+    def convert(self, subs, ass_file_name, task_config: Config):
         """Converts an SRT file with word-level timestamps to an animated ASS subtitle file."""
-        frame_width, frame_height = self.config.video_resolution
-        
+        frame_width, frame_height = task_config.video_resolution
+        frame_width, frame_height = (int(frame_width), int(frame_height))
+
         subs = self._group_fast_words(subs)
-        
+        font_size = self._calculate_font_size()
+
         with open(ass_file_name, 'w', encoding='utf-8') as file:
             file.write(self._generate_ass_header())
 
@@ -44,43 +46,60 @@ class AdvancedSRTtoASSConverter:
                 start = self._format_time(time_start)
                 end = self._format_time(time_end)
 
-                font_size = self._calculate_font_size()
-                pos_offset = -1 if i%2 ==0 else 1
-                pos_x_still = 0 if i%3==0 else 1
-                pos_x = frame_width // 2
-                pos_x_new = pos_x + (pos_offset * pos_x_still* int(frame_width*0.01))# Slight horizontal shift
-                pos_y = frame_height // 2 # Centered text with gradual stacking
-                pos_y_still = 0 if i%3!=0 else 1
-                pos_y_new = pos_x + (pos_offset * pos_y_still * int(frame_height*0.01))# Slight horizontal shift
+                # Adjust for vertical video orientation
+                pos_x = frame_height // 2
+                pos_y = frame_width // 2  # Middle of the frame
+                pos_y = pos_y + (frame_width - pos_y) // 3
+
+                num_words = len(text.split(' '))
+                if num_words > 1:
+                    pos_x = frame_height
+                    pos_x_final = 0
+                else:
+                    pos_x_final = pos_x
 
                 # **Advanced Effects**
-                final_font_size = font_size * (max(duration, 0.75) if duration < 1 else min(duration, 1.25))
-                effects = ("{"+
-                    f"\move({pos_x},{pos_y},{pos_x},{pos_y},0,{int(duration*1000)})\\fs{font_size}\\bord2\\shad1\\1c&HFFFFFF&\\t(0,{int(duration*1000)},\\fs{final_font_size})"
-                    + "}"
+                final_font_size = max(int(font_size * (min(duration, 0.35))), font_size - 1)
+                effects = (
+                    "{" +
+                    f"\move({pos_x},{pos_y},{pos_x_final},{pos_y},0,{int(duration * 1000)})" +
+                    f"\fs{font_size}\bord2\shad1\1c&HFFFFFF&" +
+                    f"\t(0,{int(duration * 1000)},\\fs{final_font_size})" +
+                    "}"
                 )
-        
+
                 file.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{effects}{text}\n")
-                
 
         print(f"Lyrics saved to {ass_file_name}")
         return ass_file_name
 
-    def _group_fast_words(self, words:list):
+    def _group_fast_words(self, words: list):
         """Groups words if they appear too fast (threshold < self.word_threshold)."""
-        return words
-        reversed_words = [_.copy() for _ in words]
+        words_copy = [_.copy() for _ in words]
         new_words = []
-        for i, sub in enumerate(reversed_words):
-            time_start = sub['start']
-            time_end = sub['end']
-            duration = time_start - new_words[-1]['end'] if i != 0 else 0
-            text = sub['word']
-            if i == 0 or duration > self.word_threshold:
+        last_valid_sub = None
+
+        for i, sub in enumerate(words_copy):
+            sub['word'] = re.sub(r'[,.():;\]\[]', '', sub['word'])
+            if 'start' in sub and 'end' in sub:
                 new_words.append(sub)
+                last_valid_sub = sub
             else:
-                new_words[-1]['end'] = time_end
-                new_words[-1]['word'] += ' ' + text
+                if last_valid_sub:
+                    last_valid_sub['word'] += ' ' + sub['word']
+                    # Look ahead to find the next valid 'start' key
+                    found_valid_start = False
+                    for j in range(i + 1, len(words_copy)):
+                        if 'start' in words_copy[j]:
+                            last_valid_sub['end'] = words_copy[j]['start']
+                            found_valid_start = True
+                            break
+                    if not found_valid_start:
+                        # If no valid 'start' key is found, do nothing
+                        continue
+                else:
+                    # If there's no valid subtitle before this one, just skip it
+                    continue
         return new_words
 
     def _format_time(self, seconds):
@@ -94,11 +113,25 @@ class AdvancedSRTtoASSConverter:
     def _calculate_font_size(self):
         """Calculates a dynamic font size based on video resolution."""
         frame_width, frame_height = self.config.video_resolution
-        return int((frame_width) * 0.2)
+
+        # Define a base font size for a standard resolution (e.g., 1080p)
+        base_font_size = 40
+        # Adjust the font size based on the frame width
+        if frame_width >= 1920:
+            # For Full HD (1080p) and above
+            font_size = int(frame_width / base_font_size)
+        elif frame_width >= 1280:
+            # For HD (720p)
+            font_size = int(frame_width / (base_font_size * 1.2))
+        else:
+            # For lower resolutions
+            font_size = int(frame_width / (base_font_size * 1.5))
+
+        return font_size
 
 if __name__ == "__main__":
     # Example Usage
     config = Config('./', './')
-    config.video_resolution = (1920, 1080)
+    config.video_resolution = (1080, 1920)  # Vertical video resolution
     converter = AdvancedSRTtoASSConverter(config)
     converter.convert("input.srt", "output.ass")

@@ -9,7 +9,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram import Bot as aioBot
 
-from lyri_core import Config, LyricsVideoGenerator
+from fastapi_dclient import VideoAlignerClient
 import asyncio
 from yt_dlp import YoutubeDL
 import re
@@ -260,30 +260,31 @@ async def align(update: Update, context: ContextTypes.DEFAULT_TYPE, production_t
                     background_file = {}
                 background_file['file_name'] = background_filename
                 
-        config = context.bot_data['aligner_config']
-        generator = context.bot_data['aligner_generator']
+        #generator = context.bot_data['aligner_generator']
+        api_client = context.bot_data['api_client']
         
+        audio_file_name = source_file['file_name']
         data = {
-            'audio_file_name': source_file['file_name'],
-            'input_cache': input_cache,
-            'output_cache': output_cache,
             'production_type': production_type,
             'aspect_ratio': context.user_data.get('aspect_ratio', 'vertical'),
             'video_resolution': context.user_data.get('video_resolution', (1920, 1080))
         }
         if not production_type == 'separate_audio':
             data['text_file_name'] = lyrics_file['file_name'] if lyrics_file else None
-            data['background_file_name'] = background_file['file_name']
-        config.from_user_data(data)
+            background_file_path = background_file['file_name']
+        else:
+            background_file_path = None
 
-        result_paths = await asyncio.get_event_loop().run_in_executor(
-            None,
-           generator.generate
-        )
+        result_paths = await api_client.align(audio_file_name, data, background_file_path)
+
+        # result_paths = await asyncio.get_event_loop().run_in_executor(
+        #     None,
+        #    generator.generate
+        # )
         
         # Send the aligned video
-        video_path = result_paths.get('video_path')
-        subtitles_path = result_paths.get('subtitles_path')
+        video_path = result_paths.get('video_file_path')
+        subtitles_path = result_paths.get('sync_file_path')
         vocal_audio_full_path = result_paths.get('vocal_path')
         instrumental_audio_full_path = result_paths.get('instrumental_path')
         input_audio_path = result_paths.get('audio_path')
@@ -349,16 +350,18 @@ def is_context_full(user_data: dict) -> bool:
     has_lyrics = 'lyrics_file' in user_data
     return has_lyrics and (has_video != has_audio)  # XOR: one of video or audio, not both
 
-def setup_core_logic(context):
-    bot_config = context.bot_data['config']
-    if context.bot_data.get('aligner_generator'): return
+def setup_core_logic(bot_data):
+    bot_config = bot_data['config']
+    if bot_data.get('api_client'): return
      
-    config = Config(input_cache=bot_config['paths']['input_cache'], 
-        output_cache=bot_config['paths']['output_cache'], 
-        vocal_separator_model=bot_config["aligner"]["aligner_model_path"],)
-    generator = LyricsVideoGenerator(config)
-    context.bot_data['aligner_config'] = config
-    context.bot_data['aligner_generator'] = generator
+    api_host = bot_config['api_server']['api_url']
+    bot_cache_path = bot_config['paths']['output_cache']
+    bot_input_cache_path = bot_config['paths']['input_cache']
+    api_client = VideoAlignerClient(api_url=api_host, input_chache = bot_input_cache_path, output_cache_path=bot_cache_path)
+    bot_data['api_client'] = api_client
+    
+    # context.bot_data['aligner_config'] = config
+    # context.bot_data['aligner_generator'] = generator
     return
 
 async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -405,8 +408,8 @@ async def try_start_processing(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_chat.send_message(output_message, reply_markup=markup)
         return
 
-    await update.effective_chat.send_message("Good! Now I'm settin up my core logic...")
-    setup_core_logic(context)
+    #await update.effective_chat.send_message("Good! Now I'm settin up my core logic...")
+    #setup_core_logic(context)
     
     # Ask for video orientation
     if 'aspect_ratio' not in user_data:
@@ -570,7 +573,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await try_start_processing(update, context)
     elif query.data == 'separate_audio':
         await query.edit_message_text("You selected: Separate audio 🎤. Processing will begin soon!")
-        setup_core_logic(context)
+        #setup_core_logic(context)
         await align(update, context, 'separate_audio')
     elif query.data == 'cancel':
         await query.edit_message_text("Processing cancelled. You can start a new session now. 😊")
@@ -646,6 +649,8 @@ def main():
     output_cache = settings["paths"]["output_cache"]
     os.makedirs(input_cache, exist_ok=True)
     os.makedirs(output_cache, exist_ok=True)
+    
+    setup_core_logic(app.bot_data)
 
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
