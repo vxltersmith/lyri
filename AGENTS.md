@@ -3,176 +3,161 @@
 LYRI is a music video generation system that creates karaoke/music videos from audio tracks and lyrics.
 
 ## Table of Contents
-- [Code Structure](#code-structure)
-- [Build/Lint/Test](#build-lint-test)
+- [Build/Lint/Test](#buildlinttest)
 - [Code Style Guidelines](#code-style-guidelines)
-- [Architecture Pattern](#architecture-pattern)
-- [Project Management](#project-management)
+
+## Installation
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+## Build/Lint/Test
+
+### Linting and Formatting
+```bash
+ruff check . --fix
+black lyri/
+mypy lyri/ --ignore-missing-imports
+```
+
+### Testing
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_<file>.py -v
+
+# Run specific test function
+pytest tests/test_<file>.py::test_<function> -v
+
+# Run with coverage
+pytest tests/ --cov=lyri --cov-report=html
+
+# Run specific service tests
+python -m pytest tests/test_fastapi_server.py -v
+python -m pytest tests/test_telegram_bot.py -v
+```
+
+### Running Systems
+```bash
+python telegram_bot.py --config ./configs/default.yaml
+uvicorn fastapi_server:app --host 0.0.0.0 --port 8000
+```
 
 ## Code Structure
 
 ### Core Components
-- **`lyri_core.py`**: Main orchestrator that coordinates audio processing, lyrics alignment, and video building
-- **`audio_processor.py`**: Handles audio file processing and vocal separation using ONNX models
-- **`aligners.py`**: Contains `LyricsAligner` and `LyricsAlignerWithWhisper` classes for synchronizing lyrics with audio
-- **`video_builder.py`**: Builds final videos using ffmpeg with subtitles overlay
-- **`subtitles_engine.py`**: Converts SRT subtitles to ASS format for advanced animations
-- **`config.py`**: Configuration management system
+- `lyri_core.py`: Main orchestrator
+- `audio_processor.py`: Audio processing & vocal separation
+- `aligners.py`: Lyrics synchronization
+- `video_builder.py`: Video building with ffmpeg
+- `subtitles_engine.py`: SRT to ASS conversion
+- `config.py`: Configuration management
 
-### Telegram Bot Components
-- **`telegram_bot.py`**: Main Telegram bot implementation
-- **`fastapi_server.py`**: HTTP API server for processing tasks
-- **`fastapi_dclient.py`**: Client for communicating with FastAPI server
+### Telegram Bot & API
+- `telegram_bot.py`: Telegram bot implementation
+- `fastapi_server.py`: HTTP API server
+- `fastapi_dclient.py`: Client for FastAPI server
 
-## Build/Lint/Test 
-
-### Installation
-```bash
-# Install main dependencies
-pip install -r requirements.txt
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-```
-
-### Linting and Formatting
-```bash
-# Run ruff linter
-ruff check .
-
-# Run black formatter
-black lyri/
-
-# Run mypy type checker
-mypy lyri/ --ignore-missing-imports
-```
-
-### Running the System
-```bash
-python telegram_bot.py --config ./configs/default.yaml
-```
-
-### Running the API Server
-```bash
-uvicorn fastapi_server:app --host 0.0.0.0 --port 8000
-```
-
-### Running Tests
-```bash
-pytest tests/ -v
-```
+### Key Dependencies
+- Audio: speechbrain, audio-separator, onnxruntime-gpu
+- Video: ffmpeg-python
+- Speech: whisperx
+- Telegram: python-telegram-bot
+- API: fastapi, uvicorn
+- Utils: pathlib, structlog, aiohttp
 
 ## Code Style Guidelines
 
-### Python-Specific Rules
+### Imports
+- Standard library → Third-party → Local
+- Group by module, one per line
+- Always use absolute imports: `from lyri.utils import foo`
 
-#### Imports
-- Standard library imports first
-- Third-party imports second
-- Local application imports third
-- Group imports by module
-- One import per line
+```python
+import os
+from typing import Optional
+import numpy as np
+from speechbrain.processing import AudioProcessing
 
-#### Naming Conventions
-- `snake_case` for variables and functions
-- `PascalCase` for classes
-- `UPPER_CASE` for constants
-- Descriptive names indicating purpose
+from lyri.config import Config
+from lyri.utils.file_utils import ensure_directory
+```
 
-#### Type Hints
-- Use type hints for all function parameters and return values
-- For complex return types, use `Tuple` or `Optional`
+### Naming Conventions
+- Variables/functions: `snake_case`
+- Classes: `PascalCase`
+- Constants: `UPPER_CASE`
+- Private: `_prefix`
+- Tests: `test_` prefix
 
-#### Error Handling
-- Use specific exception types rather than bare `except:`
-- Logging framework for errors and debugging
-- Return `None` or raise exceptions for error conditions
+### Type Hints
+- Required for all parameters and return values
+- Use `-> None` for void functions
+- Use `Optional[T]` for optional values
+- Use `Tuple[T, U]` for tuples
 
-#### String Handling
-- Use f-strings or `str.format()` instead of string concatenation
-- Be mindful of encoding (UTF-8) when working with text files
+### Error Handling
+- Use specific exceptions, never bare `except:`
+- Log with `structlog` for errors and debugging
+- Return `None` or raise exceptions
+- Use `try/except/finally` for resource cleanup
+- Include context in log messages (paths, user IDs)
 
-#### Async/Await Patterns
-- All I/O operations should be async/await
+### String & File Operations
+- Use f-strings: `f"Value: {value}"`
+- Always use UTF-8 for text files
+- Use `Path` from pathlib: `Path(file)`
+
+### Async/Await
+- All I/O operations must be async
 - Use `asyncio.run()` for main entry points
-- Properly handle task cancellation
+- Use `async with` for context managers
+- Name async functions with `_async` suffix
 
-### Architecture Pattern
+### Logging Levels
+- `DEBUG`: Detailed debugging info
+- `INFO`: High-level progress
+- `WARNING`: Potential issues
+- `ERROR`: Affects operation
+- `CRITICAL`: Critical failures
 
-#### Configuration Management
-- Centralized configuration through `config.py`
-- Use dependency injection pattern for passing configuration
-- Support both command-line and YAML configuration files
-
-#### Task Management
-- Each processing task has distinct stages:
-  1. Audio preprocessing
-  2. Vocal separation
-  3. Lyrics alignment
-  4. Video building
-  
-#### Error Handling
-- Graceful degradation
-- User-friendly error messages
-- Comprehensive logging throughout pipeline
+### Docstrings
+- Follow Google style
+- Include: description, parameters (with types), return (with type)
+- Add examples for complex functionality
 
 ### File Organization
-- Group related components together
-- Clear separation between:
-  - Core processing logic
-  - Telegram bot interface
-  - FastAPI HTTP interface
+- Keep files < 500 lines when possible
+- Split large files into logical modules
+- Use `__all__` for public API
+- Group related code together
 
-## Project Management
+## Architecture Patterns
 
-### Configuration Files
-- `configs/default.yaml`: Main configuration
-- `configs/server_default.yaml`: Server-specific configuration
+### Configuration
+- Centralized via `config.py`
+- Dependency injection for Config objects
+- Support YAML and CLI config
+- Validate on initialization
 
-### Dependencies
-See `requirements.txt` for full dependency list:
-- `speechbrain`: Speech processing
-- `audio-separator`: Vocal separation
-- `onnxruntime-gpu`: ONNX runtime with GPU support
-- `ffmpeg-python`: Video processing
-- `python-telegram-bot`: Telegram bot framework
-- `fastapi`: HTTP API framework
-- `uvicorn`: ASGI server
-- Additional utilities for text processing, file handling, etc.
+### Task Pipeline
+1. Audio preprocessing
+2. Vocal separation
+3. Lyrics alignment
+4. Video building
 
-### Key Libraries
-- Audio processing: speechbrain, audio-separator
-- Video processing: ffmpeg-python
-- Speech recognition: whisperx
-- Telegram bot: python-telegram-bot
-- HTTP API: FastAPI
+### Error Handling
+- Graceful degradation
+- User-friendly messages
+- Comprehensive logging
+- Retry logic for transient failures
+- Custom exceptions for app-specific errors
 
-## Development Tips
-
-### Working with Audio Files
-- Audio files are processed in WAV format at 16kHz sample rate
-- Original files are preserved for reference
-- Separated tracks (vocals/instrumentals) stored in cache directories
-
-### Video Generation
-- Background support (images or videos)
-- Dynamic resolution based on aspect ratio
-- SRT subtitles with timestamp alignment
-
-### Configuration Overrides
-- Use command-line arguments to override YAML configs
-- Supports per-task configuration through `Config.from_user_data()`
-
-### Testing Approach
-- Integration testing with real audio/lyrics files
-- Manual verification of generated videos
-- Check alignment accuracy with known song segments
-
-### Internationalization
-- Support for multiple languages in lyrics
-- Language detection through config parameters
-
-### Scaling Considerations
-- GPU acceleration for audio processing
-- Asynchronous I/O operations
-- Batch processing support (future enhancement)
+### Async Pattern
+- Use `asyncio` for concurrency
+- Prefer async libraries (aiohttp)
+- Limit thread pool for I/O operations
+- Properly handle task cancellation
