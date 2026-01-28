@@ -1,0 +1,39 @@
+services:
+  lyri-server:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - lyri-checkpoints:/app/checkpoints
+      - lyri-cache:/app/cache
+      - lyri-data:/app/server_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  lyri-bot:
+    build: .
+    profiles: ["bot"]
+    command: ["bot"]
+    volumes:
+      - lyri-checkpoints:/app/checkpoints
+      - lyri-cache:/app/cache
+      - lyri-data:/app/server_data
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  lyri-checkpoints:
+  lyri-cache:
+  lyri-data:
