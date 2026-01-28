@@ -1,0 +1,7 @@
+[tool.ruff]
+line-length = 88
+select = ["E", "F"]
+ignore = ["E402"]  # Allow imports not at top of file
+
+[tool.ruff.per-file-ignores]
+"subtitles_engine.py" = ["E501"]  # ASS subtitle format requires long lines
