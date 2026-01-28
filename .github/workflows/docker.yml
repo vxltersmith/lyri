@@ -42,16 +42,16 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cuda
 
-      - name: Build universal image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.universal
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:universal
+      # - name: Build universal image
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     file: Dockerfile.universal
+      #     platforms: linux/amd64,linux/arm64
+      #     push: ${{ github.event_name != 'pull_request' }}
+      #     tags: |
+      #       ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      #       ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:universal
 
   lint:
     runs-on: ubuntu-latest
