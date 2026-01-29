@@ -2,9 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-LYRI creates karaoke/music videos from audio tracks and lyrics.
+LYRI creates karaoke/music videos from audio tracks, musical video and optional lyrics of the song.
 It uses AI models for vocal separation and lyrics synchronization,
-with interfaces for Telegram and HTTP APIs.
+with interfaces for Telegram and HTTP APIs. 
+It can recognize and\or align lyrics with musical audio file, create astonishing subtitle or lyrics video as output. 
+
+Project is the mostly core logic server and telegram bot as demo, any contributions are welcome 
 
 ## Quick Start
 
