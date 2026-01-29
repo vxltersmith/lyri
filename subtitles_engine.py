@@ -1,6 +1,6 @@
-import os
 from config import Config
 import re
+
 
 class AdvancedSRTtoASSConverter:
     def __init__(self, config: Config):
@@ -28,21 +28,21 @@ class AdvancedSRTtoASSConverter:
     """
 
     def convert(self, subs, ass_file_name, task_config: Config):
-        """Converts an SRT file with word-level timestamps to an animated ASS subtitle file."""
+        """Convert SRT with word-level timestamps to animated ASS subtitle."""
         frame_width, frame_height = task_config.video_resolution
         frame_width, frame_height = (int(frame_width), int(frame_height))
 
         subs = self._group_fast_words(subs)
         font_size = self._calculate_font_size()
 
-        with open(ass_file_name, 'w', encoding='utf-8') as file:
+        with open(ass_file_name, "w", encoding="utf-8") as file:
             file.write(self._generate_ass_header())
 
             for i, sub in enumerate(subs):
-                time_start = sub['start']
-                time_end = sub['end']
+                time_start = sub["start"]
+                time_end = sub["end"]
                 duration = time_end - time_start
-                text = sub['word']
+                text = sub["word"]
                 start = self._format_time(time_start)
                 end = self._format_time(time_end)
 
@@ -51,7 +51,7 @@ class AdvancedSRTtoASSConverter:
                 pos_y = frame_width // 2  # Middle of the frame
                 pos_y = pos_y + (frame_width - pos_y) // 3
 
-                num_words = len(text.split(' '))
+                num_words = len(text.split(" "))
                 if num_words > 1:
                     pos_x = frame_height
                     pos_x_final = 0
@@ -59,16 +59,20 @@ class AdvancedSRTtoASSConverter:
                     pos_x_final = pos_x
 
                 # **Advanced Effects**
-                final_font_size = max(int(font_size * (min(duration, 0.35))), font_size - 1)
+                final_font_size = max(
+                    int(font_size * (min(duration, 0.35))), font_size - 1
+                )
                 effects = (
-                    "{" +
-                    f"\move({pos_x},{pos_y},{pos_x_final},{pos_y},0,{int(duration * 1000)})" +
-                    f"\fs{font_size}\bord2\shad1\1c&HFFFFFF&" +
-                    f"\t(0,{int(duration * 1000)},\\fs{final_font_size})" +
-                    "}"
+                    "{"
+                    + f"\move({pos_x},{pos_y},{pos_x_final},{pos_y},0,{int(duration * 1000)})"
+                    + f"\fs{font_size}\bord2\shad1\1c&HFFFFFF&"
+                    + f"\t(0,{int(duration * 1000)},\\fs{final_font_size})"
+                    + "}"
                 )
 
-                file.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{effects}{text}\n")
+                file.write(
+                    f"Dialogue: 0,{start},{end},Default,,0,0,0,,{effects}{text}\n"
+                )
 
         print(f"Lyrics saved to {ass_file_name}")
         return ass_file_name
@@ -80,18 +84,18 @@ class AdvancedSRTtoASSConverter:
         last_valid_sub = None
 
         for i, sub in enumerate(words_copy):
-            sub['word'] = re.sub(r'[,.():;\]\[]', '', sub['word'])
-            if 'start' in sub and 'end' in sub:
+            sub["word"] = re.sub(r"[,.():;\]\[]", "", sub["word"])
+            if "start" in sub and "end" in sub:
                 new_words.append(sub)
                 last_valid_sub = sub
             else:
                 if last_valid_sub:
-                    last_valid_sub['word'] += ' ' + sub['word']
+                    last_valid_sub["word"] += " " + sub["word"]
                     # Look ahead to find the next valid 'start' key
                     found_valid_start = False
                     for j in range(i + 1, len(words_copy)):
-                        if 'start' in words_copy[j]:
-                            last_valid_sub['end'] = words_copy[j]['start']
+                        if "start" in words_copy[j]:
+                            last_valid_sub["end"] = words_copy[j]["start"]
                             found_valid_start = True
                             break
                     if not found_valid_start:
@@ -129,9 +133,10 @@ class AdvancedSRTtoASSConverter:
 
         return font_size
 
+
 if __name__ == "__main__":
     # Example Usage
-    config = Config('./', './')
+    config = Config("./", "./")
     config.video_resolution = (1080, 1920)  # Vertical video resolution
     converter = AdvancedSRTtoASSConverter(config)
     converter.convert("input.srt", "output.ass")

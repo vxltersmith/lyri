@@ -13,8 +13,12 @@ class LyricsAligner:
         self.config = config
 
     def align_lyrics(self, vocal_audio_full_path):
-        input_text_path = os.path.join(self.config.input_cache, self.config.text_file_name)
-        sync_file_path = os.path.join(self.config.output_cache, f"{self.config.audio_file_name}.srt")
+        input_text_path = os.path.join(
+            self.config.input_cache, self.config.text_file_name
+        )
+        sync_file_path = os.path.join(
+            self.config.output_cache, f"{self.config.audio_file_name}.srt"
+        )
 
         logging.info("Detecting lyrics language...")
         with open(input_text_path, "r", encoding="utf-8") as f:
@@ -22,15 +26,20 @@ class LyricsAligner:
         language, confidence = langid.classify(text)
         logging.info(f"Detected language {language} with confidence: {confidence}")
 
-        if language != 'en':
+        if language != "en":
             new_lang = "rus" if language == "ru" else ""
             if not new_lang:
-                raise Exception(f"Unsupported language {language}. If you wish to use it, contact us in discord.")
+                raise Exception(
+                    f"Unsupported language {language}. "
+                    "If you wish to use it, contact us in discord."
+                )
             logging.info(f"Changing aligner config to {new_lang}")
-            self.config.aligner_config_string = self.config.aligner_config_string.replace("eng", new_lang)
+            self.config.aligner_config_string = (
+                self.config.aligner_config_string.replace("eng", new_lang)
+            )
             logging.info(f"Updated aligner config {self.config.aligner_config_string}")
 
-        logging.info('Aligning audio with lyrics...')
+        logging.info("Aligning audio with lyrics...")
         task = Task(config_string=self.config.aligner_config_string)
         task.audio_file_path_absolute = vocal_audio_full_path
         task.text_file_path_absolute = input_text_path
@@ -45,13 +54,14 @@ class LyricsAligner:
 
         return sync_file_path
 
+
 class LyricsAlignerWithWhisper:
     def __init__(self, config):
         self.config = config
         self.device = "cuda" if config.gpu_on else "cpu"
         self.model = whisperx.load_model("large-v2", device=self.device)
         self.music_subtitles_generator = AdvancedSRTtoASSConverter(config)
-        
+
     def format_time(self, time_in_seconds):
         # Convert seconds to hours, minutes, seconds, and milliseconds
         hours = int(time_in_seconds // 3600)
@@ -61,13 +71,13 @@ class LyricsAlignerWithWhisper:
 
         # Format the time in SRT format (HH:MM:SS,mmm)
         return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
-        
-    def save_lyrics(self, lyrics, path, key='word'):
-         # Write the transcription result to an SRT file
-        with open(path, 'w') as srt_file:
+
+    def save_lyrics(self, lyrics, path, key="word"):
+        # Write the transcription result to an SRT file
+        with open(path, "w") as srt_file:
             for i, segment in enumerate(lyrics):
-                start_time = segment['start']
-                end_time = segment['end']
+                start_time = segment["start"]
+                end_time = segment["end"]
                 text = segment[key]
 
                 # Format the time in SRT format (HH:MM:SS,mmm)
@@ -80,34 +90,53 @@ class LyricsAlignerWithWhisper:
                 srt_file.write(f"{text}\n\n")
 
     def align_lyrics(self, vocal_audio_full_path, task_config: Config):
-        sync_file_path = os.path.join(self.config.output_cache, f"{task_config.audio_file_name}.srt")
+        sync_file_path = os.path.join(
+            self.config.output_cache, f"{task_config.audio_file_name}.srt"
+        )
 
-        logging.info('Transcribing audio with WhisperX...')
+        logging.info("Transcribing audio with WhisperX...")
         result = self.model.transcribe(vocal_audio_full_path, chunk_size=30)
         # 2. Align whisper output
-        model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=self.device)
-        result = whisperx.align(result["segments"], model_a, metadata, 
-            vocal_audio_full_path, self.device, return_char_alignments=False)
-        raw_subs = result['word_segments']
-        
-        if self.config.production_type == 'music':
-            self.music_subtitles_generator.convert(raw_subs, sync_file_path, task_config)
+        model_a, metadata = whisperx.load_align_model(
+            language_code=result["language"], device=self.device
+        )
+        result = whisperx.align(
+            result["segments"],
+            model_a,
+            metadata,
+            vocal_audio_full_path,
+            self.device,
+            return_char_alignments=False,
+        )
+        raw_subs = result["word_segments"]
+
+        if self.config.production_type == "music":
+            self.music_subtitles_generator.convert(
+                raw_subs, sync_file_path, task_config
+            )
         else:
             self.save_lyrics(raw_subs, sync_file_path)
         print(f"Transcription saved to {sync_file_path}")
         return sync_file_path
 
+
 # Example usage
 if __name__ == "__main__":
-    config = Config(input_cache = "/app/synclyr/data/inputs_cache", output_cache = "/app/synclyr/data/aligner_cache")
+    config = Config(
+        input_cache="/app/synclyr/data/inputs_cache",
+        output_cache="/app/synclyr/data/aligner_cache",
+    )
     config.from_user_data(
         {
             "text_file_name": "lyrics.txt",
-            "audio_file_name": "09f7803f-baad-485e-afe9-186ca2024256.mp4"
+            "audio_file_name": "09f7803f-baad-485e-afe9-186ca2024256.mp4",
         }
     )
     aligner = LyricsAlignerWithWhisper(config)
-    vocal_audio_full_path = "/app/synclyr/data/inputs_cache/audio_cache/09f7803f-baad-485e-afe9-186ca2024256.mp4_(Vocals)_Kim_Vocal_2.wav"
+    vocal_audio_full_path = (
+        "/app/synclyr/data/inputs_cache/audio_cache/"
+        "09f7803f-baad-485e-afe9-186ca2024256.mp4_(Vocals)_Kim_Vocal_2.wav"
+    )
     sync_file_path = aligner.align_lyrics(vocal_audio_full_path)
     if sync_file_path:
         print(f"Sync file created at: {sync_file_path}")

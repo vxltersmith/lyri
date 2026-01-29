@@ -1,12 +1,14 @@
 import requests
-import time
 import json
 import os
 import asyncio
 import logging
 
+
 class VideoAlignerClient:
-    def __init__(self, api_url="http://127.0.0.1:8000", input_chache = './', output_cache_path = './'):
+    def __init__(
+        self, api_url="http://127.0.0.1:8000", input_chache="./", output_cache_path="./"
+    ):
         self.api_url = api_url
         self.logger = logging.getLogger(__name__)
         self.output_cache_path = output_cache_path
@@ -15,11 +17,20 @@ class VideoAlignerClient:
     def upload_files(self, file_paths, keys):
         """Uploads multiple files to the FastAPI server."""
         url = f"{self.api_url}/upload/"
-        files = [('files', (os.path.basename(file_path), open(os.path.join(self.input_chache, file_path), 'rb'))) for file_path in file_paths]
-        data = {'keys': keys}
+        files = [
+            (
+                "files",
+                (
+                    os.path.basename(file_path),
+                    open(os.path.join(self.input_chache, file_path), "rb"),
+                ),
+            )
+            for file_path in file_paths
+        ]
+        data = {"keys": keys}
         response = requests.post(url, files=files, data=data)
         return response.json()
-    
+
     def upload_metadata(self, task_id, metadata):
         """Uploads metadata for a specific task."""
         url = f"{self.api_url}/upload-meta/{task_id}"
@@ -94,7 +105,7 @@ class VideoAlignerClient:
 
         task_id = upload_response["task_id"]
         self.logger.info(f"Task ID: {task_id}")
-        
+
         # Convert the dictionary to a JSON string
         self.logger.info("Uploading metadata...")
         json_data = json.dumps(meta_data, indent=4)
@@ -127,12 +138,12 @@ class VideoAlignerClient:
         self.logger.info("Deleting task...")
         delete_response = self.delete_task(task_id)
         self.logger.info("Response: %s", delete_response)
-        
+
         if completed:
             return results
         else:
-            return None  
-        
+            return None
+
 
 # Example usage
 if __name__ == "__main__":
@@ -140,13 +151,17 @@ if __name__ == "__main__":
 
     client = VideoAlignerClient()
 
-    audio_file_path = "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
-    background_file_path = "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
+    audio_file_path = (
+        "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
+    )
+    background_file_path = (
+        "./server_data/inputs_cache/video_24ebd44b-47e7-4892-909d-9106b7ed30e3.mp4"
+    )
     production_type = "music"
     meta_data = {
-        'production_type': production_type,
-        'aspect_ratio': 'vertical',
-        'video_resolution': (1080, 1920)
+        "production_type": production_type,
+        "aspect_ratio": "vertical",
+        "video_resolution": (1080, 1920),
     }
 
     asyncio.run(client.align(audio_file_path, meta_data, background_file_path))

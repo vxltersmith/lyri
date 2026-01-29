@@ -1,17 +1,21 @@
-
 from audio_separator.separator import Separator
 import os
 import subprocess
 
 
-wav_path = 'Nine Thou (Grant Mohrman Superstars Remix).wav'
-cache_dir = './audio_cache/'
+wav_path = "Nine Thou (Grant Mohrman Superstars Remix).wav"
+cache_dir = "./audio_cache/"
 vocal_separator_model = "./checkpoints/vocal_separator/Kim_Vocal_2.onnx"
-vocal_separator_model = "./checkpoints/drum_separator/model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+vocal_separator_model = (
+    "./checkpoints/drum_separator/model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+)
 sample_rate: int = 16000
-#path='Devil Eyes.mp3'
+# path='Devil Eyes.mp3'
 
-def resample_audio(input_audio_file: str, output_audio_file: str, sample_rate: int = 16000):
+
+def resample_audio(
+    input_audio_file: str, output_audio_file: str, sample_rate: int = 16000
+):
     p = subprocess.Popen(
         [
             "ffmpeg",
@@ -26,8 +30,11 @@ def resample_audio(input_audio_file: str, output_audio_file: str, sample_rate: i
         ]
     )
     ret = p.wait()
-    assert ret == 0, f"Resample audio failed! Input: {input_audio_file}, Output: {output_audio_file}"
+    assert (
+        ret == 0
+    ), f"Resample audio failed! Input: {input_audio_file}, Output: {output_audio_file}"
     return output_audio_file
+
 
 # Initialize vocal separator if provided
 vocal_separator = None
@@ -39,7 +46,9 @@ if vocal_separator_model is not None:
         model_file_dir=os.path.dirname(vocal_separator_model),
     )
     vocal_separator.load_model(os.path.basename(vocal_separator_model))
-    assert vocal_separator.model_instance is not None, "Failed to load audio separation model."
+    assert (
+        vocal_separator.model_instance is not None
+    ), "Failed to load audio separation model."
 
 # Perform vocal separation if applicable
 if vocal_separator is not None:
@@ -55,4 +64,4 @@ if vocal_separator is not None:
     )
 else:
     vocal_audio_file = wav_path
-print('done')
+print("done")

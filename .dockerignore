@@ -1,0 +1,14 @@
+.git
+.github
+__pycache__
+*.pyc
+checkpoints/
+server_data/
+aligner_cache/
+inputs_cache/
+logs/
+*.mp4
+*.wav
+*.srt
+*.mp3
+.vscode/

@@ -16,50 +16,59 @@ We welcome contributions to LYRI! Here's how you can help improve the project:
 ### Setup
 
 1. Fork the repository
+
 2. Clone your fork locally:
-```bash
-git clone https://github.com/YOUR_USERNAME/lyri.git
-cd lyri
-git remote add upstream https://github.com/anomalyco/lyri.git
-```
+
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/lyri.git
+   cd lyri
+   git remote add upstream https://github.com/anomalyco/lyri.git
+   ```
 
 3. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
 4. Install dependencies:
-```bash
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
-```
+
+   ```bash
+   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
+   ```
 
 ### Development Workflow
 
 1. Create a new branch for your changes:
-```bash
-git checkout -b your-feature-branch
-```
+
+   ```bash
+   git checkout -b your-feature-branch
+   ```
 
 2. Make your changes
+
 3. Run tests and linting:
-```bash
-pytest tests/ -v
-ruff check .
-black lyri/
-mypy lyri/ --ignore-missing-imports
-```
+
+   ```bash
+   pytest tests/ -v
+   ruff check .
+   black lyri/
+   mypy lyri/ --ignore-missing-imports
+   ```
 
 4. Commit your changes:
-```bash
-git commit -m "Your descriptive commit message"
-```
+
+   ```bash
+   git commit -m "Your descriptive commit message"
+   ```
 
 5. Push to your fork:
-```bash
-git push origin your-feature-branch
-```
+
+   ```bash
+   git push origin your-feature-branch
+   ```
 
 6. Open a Pull Request on the main repository
 
@@ -92,6 +101,7 @@ Documentation is vital for this project. Please update documentation when you:
 - Deprecate functionality
 
 Documentation updates should include:
+
 - README.md additions/changes
 - AGENTS.md updates
 - Code comments explaining complex logic
@@ -100,7 +110,7 @@ Documentation updates should include:
 ## Communication
 
 We use GitHub Issues for tracking bugs and feature requests. For more casual
-communication, join our Discord community at [INSERT LINK].
+communication, use [GitHub Discussions](https://github.com/vxltersmith/lyri/discussions).
 
 ## Commit Message Guidelines
 
@@ -113,7 +123,8 @@ Write clear, concise commit messages following these rules:
 5. Explain what and why you changed, not just what you changed
 
 Example:
-```
+
+```text
 Fix audio processing hang on empty input
 
 When input file is empty, the audio processor would hang
@@ -135,6 +146,7 @@ merged. Review process typically includes:
 ## Maintainers
 
 Current maintainers:
+
 - @anomalyco (Main maintainer)
 
 ## Thank You
